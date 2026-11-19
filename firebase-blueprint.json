@@ -1,0 +1,252 @@
+{
+  "entities": {
+    "TeamWorkspace": {
+      "title": "TeamWorkspace",
+      "description": "A shared team workspace allowing colleagues to sync customers and daily electricity meter readings in real-time.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the workspace creator."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the shared team workspace."
+        },
+        "inviteCode": {
+          "type": "string",
+          "description": "Unique alphanumeric code shared with colleagues to join the workspace."
+        },
+        "memberUids": {
+          "type": "array",
+          "description": "List of authenticated Firebase UIDs belonging to this workspace (max 10)."
+        },
+        "memberNames": {
+          "type": "array",
+          "description": "List of display names of team members in this workspace (max 10)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the workspace was created via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the workspace was last updated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "ownerId",
+        "name",
+        "inviteCode",
+        "memberUids",
+        "memberNames",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudCustomer": {
+      "title": "CloudCustomer",
+      "description": "A customer meter profile synced across team members in a shared workspace.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "ID of the TeamWorkspace this customer belongs to."
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the team member who created this customer record."
+        },
+        "createdByName": {
+          "type": "string",
+          "description": "Display name of the colleague who added this customer."
+        },
+        "memberUids": {
+          "type": "array",
+          "description": "Denormalized list of workspace member UIDs authorized to read and update this customer."
+        },
+        "name": {
+          "type": "string",
+          "description": "Customer or company name."
+        },
+        "address": {
+          "type": "string",
+          "description": "Site or factory address of the meter."
+        },
+        "meterNumber": {
+          "type": "string",
+          "description": "Unique electricity meter serial number."
+        },
+        "consumerNumber": {
+          "type": "string",
+          "description": "Utility consumer account number."
+        },
+        "phoneNumber": {
+          "type": "string",
+          "description": "Customer contact phone number."
+        },
+        "connectionType": {
+          "type": "string",
+          "description": "Connection category (e.g., 3-Phase Industrial)."
+        },
+        "sanctionedLoad": {
+          "type": "string",
+          "description": "Sanctioned connected load in kW or HP."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "workspaceId",
+        "ownerId",
+        "createdByName",
+        "memberUids",
+        "name",
+        "address",
+        "meterNumber",
+        "consumerNumber",
+        "phoneNumber",
+        "connectionType",
+        "sanctionedLoad",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudReading": {
+      "title": "CloudReading",
+      "description": "A daily electricity meter reading (kWh, kVArh, kVAh, PF) logged by a user or colleague and synced across the workspace.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "ID of the TeamWorkspace this reading belongs to."
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the colleague who logged this reading."
+        },
+        "createdByName": {
+          "type": "string",
+          "description": "Display name of the colleague who logged this reading."
+        },
+        "memberUids": {
+          "type": "array",
+          "description": "Denormalized list of workspace member UIDs authorized to view and manage this reading."
+        },
+        "customerMeterNumber": {
+          "type": "string",
+          "description": "Meter number linking this reading to the corresponding customer across devices."
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Name of the customer for display in live colleague sync feeds."
+        },
+        "readingDate": {
+          "type": "string",
+          "description": "Formatted date of the reading (e.g., 15-Nov-2026)."
+        },
+        "readingTime": {
+          "type": "string",
+          "description": "Formatted time of the reading (e.g., 09:30 AM)."
+        },
+        "readingTimestamp": {
+          "type": "number",
+          "description": "Epoch milliseconds of the reading."
+        },
+        "kwh": {
+          "type": "number",
+          "description": "Active energy reading in kWh."
+        },
+        "kvarh": {
+          "type": "number",
+          "description": "Reactive energy reading in kVArh."
+        },
+        "kvah": {
+          "type": "number",
+          "description": "Apparent energy reading in kVAh."
+        },
+        "powerFactor": {
+          "type": "number",
+          "description": "Power factor between 0.0 and 1.0."
+        },
+        "isPfAutoCalculated": {
+          "type": "boolean",
+          "description": "Whether power factor was auto-calculated from kWh/kVAh."
+        },
+        "previousKwh": {
+          "type": "number",
+          "description": "Previous kWh reading (0.0 if none)."
+        },
+        "unitsConsumed": {
+          "type": "number",
+          "description": "Net kWh units consumed since previous reading (0.0 if none)."
+        },
+        "remarks": {
+          "type": "string",
+          "description": "Shift notes or colleague remarks."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "workspaceId",
+        "ownerId",
+        "createdByName",
+        "memberUids",
+        "customerMeterNumber",
+        "customerName",
+        "readingDate",
+        "readingTime",
+        "readingTimestamp",
+        "kwh",
+        "kvarh",
+        "kvah",
+        "powerFactor",
+        "isPfAutoCalculated",
+        "previousKwh",
+        "unitsConsumed",
+        "remarks",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/workspaces/{workspaceId}": {
+      "schema": {
+        "$ref": "#/entities/TeamWorkspace"
+      },
+      "description": "Stores shared team workspaces for colleague synchronization."
+    },
+    "/cloud_customers/{customerId}": {
+      "schema": {
+        "$ref": "#/entities/CloudCustomer"
+      },
+      "description": "Stores customer meter profiles shared among workspace members."
+    },
+    "/cloud_readings/{readingId}": {
+      "schema": {
+        "$ref": "#/entities/CloudReading"
+      },
+      "description": "Stores daily electricity meter readings synced in real-time across colleagues."
+    }
+  }
+}

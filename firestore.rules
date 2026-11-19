@@ -1,0 +1,215 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default-deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isNumber(val) {
+      return val is int || val is float;
+    }
+
+    // 1. Validation Blueprint: TeamWorkspace
+    function isValidWorkspace(data) {
+      return data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.inviteCode is string && data.inviteCode.size() >= 3 && data.inviteCode.size() <= 64 &&
+             data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 10 &&
+             data.memberUids[0] is string && data.memberUids[0].size() <= 128 &&
+             data.memberNames is list && data.memberNames.size() >= 1 && data.memberNames.size() <= 10 &&
+             data.memberNames[0] is string && data.memberNames[0].size() <= 100;
+    }
+
+    // 2. Validation Blueprint: CloudCustomer
+    function isValidCloudCustomer(data) {
+      return data.workspaceId is string && data.workspaceId.size() >= 1 && data.workspaceId.size() <= 64 &&
+             data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 &&
+             data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 100 &&
+             data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 10 &&
+             data.memberUids[0] is string && data.memberUids[0].size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 150 &&
+             data.address is string && data.address.size() <= 300 &&
+             data.meterNumber is string && data.meterNumber.size() >= 1 && data.meterNumber.size() <= 64 &&
+             data.consumerNumber is string && data.consumerNumber.size() <= 64 &&
+             data.phoneNumber is string && data.phoneNumber.size() <= 32 &&
+             data.connectionType is string && data.connectionType.size() >= 1 && data.connectionType.size() <= 64 &&
+             data.sanctionedLoad is string && data.sanctionedLoad.size() <= 64;
+    }
+
+    // 3. Validation Blueprint: CloudReading
+    function isValidCloudReading(data) {
+      return data.workspaceId is string && data.workspaceId.size() >= 1 && data.workspaceId.size() <= 64 &&
+             data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 &&
+             data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 100 &&
+             data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 10 &&
+             data.memberUids[0] is string && data.memberUids[0].size() <= 128 &&
+             data.customerMeterNumber is string && data.customerMeterNumber.size() >= 1 && data.customerMeterNumber.size() <= 64 &&
+             data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 150 &&
+             data.readingDate is string && data.readingDate.size() >= 1 && data.readingDate.size() <= 32 &&
+             data.readingTime is string && data.readingTime.size() >= 1 && data.readingTime.size() <= 32 &&
+             data.readingTimestamp is int && data.readingTimestamp >= 0 &&
+             isNumber(data.kwh) && data.kwh > 0 &&
+             isNumber(data.kvarh) && data.kvarh >= 0 &&
+             isNumber(data.kvah) && data.kvah > 0 &&
+             isNumber(data.powerFactor) && data.powerFactor >= 0 && data.powerFactor <= 1.0 &&
+             data.isPfAutoCalculated is bool &&
+             isNumber(data.previousKwh) && data.previousKwh >= 0 &&
+             isNumber(data.unitsConsumed) && data.unitsConsumed >= 0 &&
+             data.remarks is string && data.remarks.size() <= 300;
+    }
+
+    // Collection 1: Shared Team Workspaces
+    match /workspaces/{workspaceId} {
+      // Signed-in users with the workspaceId (invite code) can fetch the workspace document to join it
+      allow get: if isSignedIn() && isValidId(workspaceId);
+
+      // List queries must filter by membership (whereArrayContains("memberUids", uid))
+      allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+
+      allow create: if isSignedIn() &&
+                       isValidId(workspaceId) &&
+                       incoming().keys().hasAll(['ownerId', 'name', 'inviteCode', 'memberUids', 'memberNames', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['ownerId', 'name', 'inviteCode', 'memberUids', 'memberNames', 'createdAt', 'updatedAt']) &&
+                       incoming().ownerId == request.auth.uid &&
+                       request.auth.uid in incoming().memberUids &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidWorkspace(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(workspaceId) &&
+                       resource != null &&
+                       isValidWorkspace(incoming()) &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().inviteCode == existing().inviteCode &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       (
+                         // Action 1: Existing member updating workspace details or member list
+                         (request.auth.uid in existing().memberUids &&
+                          request.auth.uid in incoming().memberUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'memberUids', 'memberNames', 'updatedAt'])) ||
+                         // Action 2: Colleague joining workspace via invite code
+                         (!(request.auth.uid in existing().memberUids) &&
+                          request.auth.uid in incoming().memberUids &&
+                          incoming().memberUids.size() == existing().memberUids.size() + 1 &&
+                          incoming().memberUids.hasAll(existing().memberUids) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberNames', 'updatedAt']))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(workspaceId) && resource != null && existing().ownerId == request.auth.uid;
+    }
+
+    // Collection 2: Cloud Synced Customers
+    match /cloud_customers/{customerId} {
+      allow get: if isSignedIn() && isValidId(customerId) && resource != null && request.auth.uid in resource.data.memberUids;
+      allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+
+      allow create: if isSignedIn() &&
+                       isValidId(customerId) &&
+                       incoming().keys().hasAll([
+                         'workspaceId', 'ownerId', 'createdByName', 'memberUids',
+                         'name', 'address', 'meterNumber', 'consumerNumber',
+                         'phoneNumber', 'connectionType', 'sanctionedLoad',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'workspaceId', 'ownerId', 'createdByName', 'memberUids',
+                         'name', 'address', 'meterNumber', 'consumerNumber',
+                         'phoneNumber', 'connectionType', 'sanctionedLoad',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().ownerId == request.auth.uid &&
+                       request.auth.uid in incoming().memberUids &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidCloudCustomer(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(customerId) &&
+                       resource != null &&
+                       isValidCloudCustomer(incoming()) &&
+                       request.auth.uid in existing().memberUids &&
+                       request.auth.uid in incoming().memberUids &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().workspaceId == existing().workspaceId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'memberUids', 'name', 'address', 'meterNumber',
+                         'consumerNumber', 'phoneNumber', 'connectionType',
+                         'sanctionedLoad', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(customerId) && resource != null && request.auth.uid in resource.data.memberUids;
+    }
+
+    // Collection 3: Cloud Synced Meter Readings
+    match /cloud_readings/{readingId} {
+      allow get: if isSignedIn() && isValidId(readingId) && resource != null && request.auth.uid in resource.data.memberUids;
+      allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+
+      allow create: if isSignedIn() &&
+                       isValidId(readingId) &&
+                       incoming().keys().hasAll([
+                         'workspaceId', 'ownerId', 'createdByName', 'memberUids',
+                         'customerMeterNumber', 'customerName', 'readingDate', 'readingTime',
+                         'readingTimestamp', 'kwh', 'kvarh', 'kvah', 'powerFactor',
+                         'isPfAutoCalculated', 'previousKwh', 'unitsConsumed', 'remarks',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'workspaceId', 'ownerId', 'createdByName', 'memberUids',
+                         'customerMeterNumber', 'customerName', 'readingDate', 'readingTime',
+                         'readingTimestamp', 'kwh', 'kvarh', 'kvah', 'powerFactor',
+                         'isPfAutoCalculated', 'previousKwh', 'unitsConsumed', 'remarks',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().ownerId == request.auth.uid &&
+                       request.auth.uid in incoming().memberUids &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidCloudReading(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(readingId) &&
+                       resource != null &&
+                       isValidCloudReading(incoming()) &&
+                       request.auth.uid in existing().memberUids &&
+                       request.auth.uid in incoming().memberUids &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().workspaceId == existing().workspaceId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'memberUids', 'customerMeterNumber', 'customerName',
+                         'readingDate', 'readingTime', 'readingTimestamp',
+                         'kwh', 'kvarh', 'kvah', 'powerFactor',
+                         'isPfAutoCalculated', 'previousKwh', 'unitsConsumed',
+                         'remarks', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(readingId) && resource != null && request.auth.uid in resource.data.memberUids;
+    }
+  }
+}

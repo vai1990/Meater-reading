@@ -1,0 +1,6 @@
+{
+  "name": "Smart Meter Pro",
+  "description": "Smart electricity meter reading, kVAr capacitor calculator, Google Drive backup & restore, and real-time colleague sync app.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
