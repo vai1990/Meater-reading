@@ -14,6 +14,7 @@ import {
   getDocs,
   setDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
   onSnapshot,
@@ -265,6 +266,68 @@ async function pushReading(workspace, customer, reading, uid, displayName) {
   return docId;
 }
 
+async function deleteCustomerFromCloud(uid, customerName, meterNumber) {
+  const targetName = String(customerName || '').trim().toLowerCase();
+  const targetMeter = String(meterNumber || '').trim().toLowerCase();
+  const isSpecificMeter = targetMeter && !targetMeter.startsWith('sheet-mtr-') && targetMeter !== 'mtr-01';
+  let deleted = 0;
+
+  const custSnap = await getDocs(query(collection(db, 'cloud_customers'), where('memberUids', 'array-contains', uid)));
+  for (const d of custSnap.docs) {
+    const data = d.data() || {};
+    const nameMatch = targetName && String(data.name || '').trim().toLowerCase() === targetName;
+    const meterMatch = isSpecificMeter && String(data.meterNumber || '').trim().toLowerCase() === targetMeter;
+    if (nameMatch || meterMatch) {
+      try { await deleteDoc(d.ref); deleted++; } catch {}
+    }
+  }
+
+  const readSnap = await getDocs(query(collection(db, 'cloud_readings'), where('memberUids', 'array-contains', uid)));
+  for (const d of readSnap.docs) {
+    const data = d.data() || {};
+    const nameMatch = targetName && String(data.customerName || '').trim().toLowerCase() === targetName;
+    const meterMatch = isSpecificMeter && String(data.customerMeterNumber || '').trim().toLowerCase() === targetMeter;
+    if (nameMatch || meterMatch) {
+      try { await deleteDoc(d.ref); deleted++; } catch {}
+    }
+  }
+  return deleted;
+}
+
+async function deleteReadingFromCloud(uid, customerName, readingDate, timestamp, kwh) {
+  const targetName = String(customerName || '').trim().toLowerCase();
+  const targetDate = String(readingDate || '').trim().toLowerCase();
+  const ts = Number(timestamp) || 0;
+  const targetKwh = Number(kwh) || 0;
+  let deleted = 0;
+
+  const readSnap = await getDocs(query(collection(db, 'cloud_readings'), where('memberUids', 'array-contains', uid)));
+  for (const d of readSnap.docs) {
+    const data = d.data() || {};
+    const nameMatch = !targetName || String(data.customerName || '').trim().toLowerCase() === targetName;
+    const timeMatch = ts > 0 && Math.abs((Number(data.readingTimestamp) || 0) - ts) < 60000;
+    const dateKwhMatch = targetDate && String(data.readingDate || '').trim().toLowerCase() === targetDate &&
+      Math.abs((Number(data.kwh) || 0) - targetKwh) < 0.01;
+    if (nameMatch && (timeMatch || dateKwhMatch)) {
+      try { await deleteDoc(d.ref); deleted++; } catch {}
+    }
+  }
+  return deleted;
+}
+
+async function clearAllUserCloudData(uid) {
+  let deleted = 0;
+  const custSnap = await getDocs(query(collection(db, 'cloud_customers'), where('memberUids', 'array-contains', uid)));
+  for (const d of custSnap.docs) {
+    try { await deleteDoc(d.ref); deleted++; } catch {}
+  }
+  const readSnap = await getDocs(query(collection(db, 'cloud_readings'), where('memberUids', 'array-contains', uid)));
+  for (const d of readSnap.docs) {
+    try { await deleteDoc(d.ref); deleted++; } catch {}
+  }
+  return deleted;
+}
+
 window.SmartMeterCloud = {
   databaseId: FIRESTORE_DATABASE_ID,
   signInWithGoogle,
@@ -276,7 +339,10 @@ window.SmartMeterCloud = {
   subscribeCloudData,
   fetchCloudSnapshotNow,
   pushCustomer,
-  pushReading
+  pushReading,
+  deleteCustomerFromCloud,
+  deleteReadingFromCloud,
+  clearAllUserCloudData
 };
 
 window.dispatchEvent(new Event('smartmeter-cloud-ready'));

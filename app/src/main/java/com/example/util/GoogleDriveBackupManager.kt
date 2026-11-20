@@ -52,6 +52,29 @@ class GoogleDriveBackupManager(private val appContext: Context) {
     private val prefs: SharedPreferences =
         appContext.getSharedPreferences("google_drive_backup_prefs", Context.MODE_PRIVATE)
 
+    fun getDeletedCustomerNames(): Set<String> {
+        val raw = prefs.getStringSet("deleted_customer_names_v1", emptySet()) ?: emptySet()
+        return raw.map { it.trim().lowercase(Locale.US) }.filter { it.isNotEmpty() }.toSet()
+    }
+
+    fun markCustomerDeleted(customerName: String) {
+        val key = customerName.trim().lowercase(Locale.US)
+        if (key.isEmpty()) return
+        val updated = getDeletedCustomerNames().toMutableSet()
+        updated.add(key)
+        prefs.edit().putStringSet("deleted_customer_names_v1", updated).apply()
+    }
+
+    fun unmarkCustomerDeleted(customerName: String) {
+        val key = customerName.trim().lowercase(Locale.US)
+        if (key.isEmpty()) return
+        val current = getDeletedCustomerNames()
+        if (key !in current) return
+        val updated = current.toMutableSet()
+        updated.remove(key)
+        prefs.edit().putStringSet("deleted_customer_names_v1", updated).apply()
+    }
+
     private val driveBackupDir: File
         get() {
             val dir = File(appContext.filesDir, "drive_backups")

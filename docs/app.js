@@ -140,7 +140,8 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
       },
       selectedCustomerId: null,
       customers: [],
-      readings: []
+      readings: [],
+      deletedCustomerNames: []
     };
   }
 
@@ -168,7 +169,8 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
         branding: { ...defaultState().branding, ...(parsed.branding || {}) },
         sheetConfig: { ...defaultState().sheetConfig, ...(parsed.sheetConfig || {}) },
         customers: Array.isArray(parsed.customers) ? parsed.customers : [],
-        readings: Array.isArray(parsed.readings) ? parsed.readings : []
+        readings: Array.isArray(parsed.readings) ? parsed.readings : [],
+        deletedCustomerNames: Array.isArray(parsed.deletedCustomerNames) ? parsed.deletedCustomerNames : []
       };
     } catch {
       return defaultState();
@@ -185,11 +187,30 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
         sheetConfig: state.sheetConfig,
         selectedCustomerId: state.selectedCustomerId,
         customers: state.customers,
-        readings: state.readings
+        readings: state.readings,
+        deletedCustomerNames: state.deletedCustomerNames || []
       }));
     } catch (err) {
       console.error('Storage save failed:', err);
     }
+  }
+
+  function isCustomerDeletedName(name) {
+    const key = String(name || '').trim().toLowerCase();
+    return Boolean(key) && Array.isArray(state.deletedCustomerNames) && state.deletedCustomerNames.includes(key);
+  }
+
+  function markCustomerDeletedName(name) {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key) return;
+    if (!Array.isArray(state.deletedCustomerNames)) state.deletedCustomerNames = [];
+    if (!state.deletedCustomerNames.includes(key)) state.deletedCustomerNames.push(key);
+  }
+
+  function unmarkCustomerDeletedName(name) {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key || !Array.isArray(state.deletedCustomerNames)) return;
+    state.deletedCustomerNames = state.deletedCustomerNames.filter(n => n !== key);
   }
 
   // ---------- Power Factor & kVAr Math (100% Parity with Android PowerFactorCalculator.kt) ----------
@@ -808,12 +829,15 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     ));
   }
 
-  function mergeParsedTabs(tabs) {
+  function mergeParsedTabs(tabs, respectDeletedBlocklist = true) {
     let custCreated = 0;
     let readUpserted = 0;
     let firstCustId = null;
 
     for (const tab of tabs) {
+      if (respectDeletedBlocklist && isCustomerDeletedName(tab.customer.name)) {
+        continue;
+      }
       let existingCust = state.customers.find(
         c => c.name.trim().toLowerCase() === tab.customer.name.trim().toLowerCase()
       );
@@ -1752,6 +1776,7 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
         state.customers.push(payload);
         state.selectedCustomerId = payload.id;
       }
+      unmarkCustomerDeletedName(payload.name);
       saveState();
       pushSingleCustomerToCloud(payload);
       closeModal();
@@ -2016,15 +2041,25 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
   function deleteReading(id) {
     if (!confirm(t('ही मीटर रीडिंग हटवायची का?', 'Delete this meter reading?'))) return;
     const item = state.readings.find(r => r.id === id);
+    const cust = item ? state.customers.find(c => c.id === item.customerId) : null;
     state.readings = state.readings.filter(r => r.id !== id);
     if (item) recalculateCustomerDeltas(item.customerId);
     saveState();
     render();
-    showToast(t('रीडिंग हटवली.', 'Reading deleted.'));
+    if (item && currentUser?.provider === 'google') {
+      const cloud = window.SmartMeterCloud;
+      const fbUser = cloud?.getCurrentFirebaseUser();
+      if (cloud && fbUser) {
+        cloud.deleteReadingFromCloud(fbUser.uid, cust?.name || '', item.readingDate, item.timestamp, item.kwh).catch(() => {});
+      }
+    }
+    showToast(t('रीडिंग कायमची हटवली.', 'Reading permanently deleted.'));
   }
 
   function deleteCustomer(id) {
-    if (!confirm(t('हा ग्राहक व त्याच्या सर्व नोंदी हटवायच्या का?', 'Delete this customer and all readings?'))) return;
+    if (!confirm(t('हा ग्राहक व त्याच्या सर्व नोंदी कायमच्या हटवायच्या का?', 'Permanently delete this customer and all readings?'))) return;
+    const cust = state.customers.find(c => c.id === id);
+    if (cust) markCustomerDeletedName(cust.name);
     state.customers = state.customers.filter(c => c.id !== id);
     state.readings = state.readings.filter(r => r.customerId !== id);
     if (state.selectedCustomerId === id) {
@@ -2032,17 +2067,32 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     }
     saveState();
     render();
-    showToast(t('ग्राहक हटवला.', 'Customer deleted.'));
+    if (cust && currentUser?.provider === 'google') {
+      const cloud = window.SmartMeterCloud;
+      const fbUser = cloud?.getCurrentFirebaseUser();
+      if (cloud && fbUser) {
+        cloud.deleteCustomerFromCloud(fbUser.uid, cust.name, cust.meterNumber).catch(() => {});
+      }
+    }
+    showToast(t('ग्राहक कायमचा हटवला.', 'Customer permanently deleted.'));
   }
 
   function clearAllData() {
-    if (!confirm(t('सर्व ग्राहक व मीटर रीडिंग डेटा कायमचा क्लीन करायचा का?', 'Clear all customers and readings?'))) return;
+    if (!confirm(t('सर्व ग्राहक व मीटर रीडिंग डेटा कायमचा क्लीन करायचा का?', 'Permanently clear all customers and readings?'))) return;
+    for (const c of state.customers) markCustomerDeletedName(c.name);
     state.customers = [];
     state.readings = [];
     state.selectedCustomerId = null;
     saveState();
     render();
-    showToast(t('सर्व डेटा क्लीन केला!', 'All local data cleared!'));
+    if (currentUser?.provider === 'google') {
+      const cloud = window.SmartMeterCloud;
+      const fbUser = cloud?.getCurrentFirebaseUser();
+      if (cloud && fbUser) {
+        cloud.clearAllUserCloudData(fbUser.uid).catch(() => {});
+      }
+    }
+    showToast(t('सर्व डेटा कायमचा क्लीन केला!', 'All data permanently cleared!'));
   }
 
   function downloadFile(filename, content, mime) {
@@ -2113,7 +2163,7 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     let changed = false;
     for (const cc of cloudCustomers) {
       const cName = String(cc.name || '').trim();
-      if (!cName) continue;
+      if (!cName || isCustomerDeletedName(cName)) continue;
       const cMeter = String(cc.meterNumber || '').trim();
       let existing = state.customers.find(c => (cc.id && c.cloudId === cc.id) || isMatchingCustomer(c, cName, cMeter));
       if (!existing) {
@@ -2155,7 +2205,7 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     for (const cr of cloudReadings) {
       const cName = String(cr.customerName || '').trim();
       const cMeter = String(cr.customerMeterNumber || '').trim();
-      if (!cName) continue;
+      if (!cName || isCustomerDeletedName(cName)) continue;
 
       let cust = state.customers.find(c => isMatchingCustomer(c, cName, cMeter));
       if (!cust) {

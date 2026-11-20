@@ -400,4 +400,110 @@ class TeamSyncRepository(
             // Best-effort member propagation
         }
     }
+
+    suspend fun deleteCustomerFromCloud(
+        customerName: String,
+        meterNumber: String
+    ): Result<Int> = runCatching {
+        val uid = try {
+            Firebase.auth.currentUser?.uid
+        } catch (_: Exception) {
+            null
+        } ?: return@runCatching 0
+
+        val targetName = customerName.trim()
+        val targetMeter = meterNumber.trim()
+        var deletedCount = 0
+
+        val custSnap = customersCollection
+            .whereArrayContains("memberUids", uid)
+            .get()
+            .await()
+        for (doc in custSnap.documents) {
+            val cust = doc.toObject(CloudCustomer::class.java) ?: continue
+            val nameMatches = targetName.isNotEmpty() && cust.name.trim().equals(targetName, ignoreCase = true)
+            val meterMatches = targetMeter.isNotEmpty() &&
+                !targetMeter.startsWith("SHEET-MTR-", ignoreCase = true) &&
+                !targetMeter.equals("MTR-01", ignoreCase = true) &&
+                cust.meterNumber.trim().equals(targetMeter, ignoreCase = true)
+            if (nameMatches || meterMatches) {
+                runCatching { doc.reference.delete().await(); deletedCount++ }
+            }
+        }
+
+        val readSnap = readingsCollection
+            .whereArrayContains("memberUids", uid)
+            .get()
+            .await()
+        for (doc in readSnap.documents) {
+            val read = doc.toObject(CloudReading::class.java) ?: continue
+            val nameMatches = targetName.isNotEmpty() && read.customerName.trim().equals(targetName, ignoreCase = true)
+            val meterMatches = targetMeter.isNotEmpty() &&
+                !targetMeter.startsWith("SHEET-MTR-", ignoreCase = true) &&
+                !targetMeter.equals("MTR-01", ignoreCase = true) &&
+                read.customerMeterNumber.trim().equals(targetMeter, ignoreCase = true)
+            if (nameMatches || meterMatches) {
+                runCatching { doc.reference.delete().await(); deletedCount++ }
+            }
+        }
+        deletedCount
+    }
+
+    suspend fun deleteReadingFromCloud(
+        customerName: String,
+        readingDate: String,
+        timestamp: Long,
+        kwh: Double
+    ): Result<Int> = runCatching {
+        val uid = try {
+            Firebase.auth.currentUser?.uid
+        } catch (_: Exception) {
+            null
+        } ?: return@runCatching 0
+
+        val targetName = customerName.trim()
+        var deletedCount = 0
+
+        val readSnap = readingsCollection
+            .whereArrayContains("memberUids", uid)
+            .get()
+            .await()
+        for (doc in readSnap.documents) {
+            val read = doc.toObject(CloudReading::class.java) ?: continue
+            val nameMatches = targetName.isEmpty() || read.customerName.trim().equals(targetName, ignoreCase = true)
+            val timeMatches = timestamp > 0L && kotlin.math.abs(read.readingTimestamp - timestamp) < 60_000L
+            val dateKwhMatches = read.readingDate.trim().equals(readingDate.trim(), ignoreCase = true) &&
+                kotlin.math.abs(read.kwh - kwh) < 0.01
+            if (nameMatches && (timeMatches || dateKwhMatches)) {
+                runCatching { doc.reference.delete().await(); deletedCount++ }
+            }
+        }
+        deletedCount
+    }
+
+    suspend fun clearAllUserCloudData(): Result<Int> = runCatching {
+        val uid = try {
+            Firebase.auth.currentUser?.uid
+        } catch (_: Exception) {
+            null
+        } ?: return@runCatching 0
+
+        var deletedCount = 0
+        val custSnap = customersCollection
+            .whereArrayContains("memberUids", uid)
+            .get()
+            .await()
+        for (doc in custSnap.documents) {
+            runCatching { doc.reference.delete().await(); deletedCount++ }
+        }
+
+        val readSnap = readingsCollection
+            .whereArrayContains("memberUids", uid)
+            .get()
+            .await()
+        for (doc in readSnap.documents) {
+            runCatching { doc.reference.delete().await(); deletedCount++ }
+        }
+        deletedCount
+    }
 }

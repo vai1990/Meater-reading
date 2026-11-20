@@ -275,8 +275,10 @@ class MeterViewModel(
 
     private suspend fun mergeCloudCustomersIntoLocalDb(cloudCustomers: List<CloudCustomer>) {
         if (cloudCustomers.isEmpty()) return
+        val deletedNames = driveManager.getDeletedCustomerNames()
         val localCustomers = repository.getAllCustomersList().toMutableList()
         for (cc in cloudCustomers) {
+            if (cc.name.trim().lowercase() in deletedNames) continue
             val match = localCustomers.find { isMatchingCustomer(it, cc.name, cc.meterNumber) }
             if (match == null) {
                 val newCust = Customer(
@@ -299,12 +301,14 @@ class MeterViewModel(
         currentUid: String
     ) {
         if (cloudReadings.isEmpty()) return
+        val deletedNames = driveManager.getDeletedCustomerNames()
         var localCustomers = repository.getAllCustomersList()
         val allLocalReadings = repository.getAllReadingsList()
         var newlySyncedFromColleague = 0
         var lastColleagueName = ""
 
         for (cr in cloudReadings) {
+            if (cr.customerName.trim().lowercase() in deletedNames) continue
             var customer = localCustomers.find {
                 isMatchingCustomer(it, cr.customerName, cr.customerMeterNumber)
             }
@@ -641,7 +645,8 @@ class MeterViewModel(
 
     private suspend fun mergeSheetTabsIntoLocalDb(
         tabs: List<ParsedSheetTab>,
-        selectImportedCustomer: Boolean
+        selectImportedCustomer: Boolean,
+        respectDeletedBlocklist: Boolean = true
     ): Pair<Int, Int> {
         var customersCreated = 0
         var readingsInsertedOrUpdated = 0
@@ -649,8 +654,12 @@ class MeterViewModel(
 
         val activeWs = _uiState.value.activeWorkspace
         val authorName = _uiState.value.currentUserName.ifBlank { "Sheet Sync" }
+        val deletedNames = if (respectDeletedBlocklist) driveManager.getDeletedCustomerNames() else emptySet()
 
         for (tab in tabs) {
+            if (respectDeletedBlocklist && tab.customer.name.trim().lowercase() in deletedNames) {
+                continue
+            }
             val allLocalCustomers = repository.getAllCustomersList()
             val currentSelBefore = _uiState.value.selectedCustomer
             val existingCustomer = allLocalCustomers.find { local ->
@@ -1240,6 +1249,8 @@ class MeterViewModel(
                 sanctionedLoad = sanctionedLoad.trim()
             )
 
+            driveManager.unmarkCustomerDeleted(customer.name)
+
             val savedCustomer = if (existingId == 0L) {
                 val newId = repository.insertCustomer(customer)
                 val inserted = customer.copy(id = newId)
@@ -1278,8 +1289,12 @@ class MeterViewModel(
 
     fun deleteCustomer(customer: Customer) {
         viewModelScope.launch {
+            driveManager.markCustomerDeleted(customer.name)
             repository.deleteCustomer(customer)
-            _uiState.update { it.copy(statusMessage = "ग्राहक काढून टाकला (Customer Deleted)") }
+            runCatching {
+                teamSyncRepository?.deleteCustomerFromCloud(customer.name, customer.meterNumber)
+            }
+            _uiState.update { it.copy(statusMessage = "ग्राहक कायमचा काढून टाकला (Customer Permanently Deleted)") }
             refreshDbStats()
         }
     }
@@ -1287,14 +1302,21 @@ class MeterViewModel(
     fun clearAllCustomersAndReadings() {
         viewModelScope.launch {
             readingsJob?.cancel()
+            val existingCustomers = repository.getAllCustomersList()
+            for (c in existingCustomers) {
+                driveManager.markCustomerDeleted(c.name)
+            }
             repository.clearAllData()
+            runCatching {
+                teamSyncRepository?.clearAllUserCloudData()
+            }
             _uiState.update {
                 it.copy(
                     customers = emptyList(),
                     selectedCustomer = null,
                     readings = emptyList(),
                     latestReading = null,
-                    statusMessage = "सर्व ग्राहक व मीटर रीडिंग डेटा क्लीन केला! (All Data Cleared)"
+                    statusMessage = "सर्व ग्राहक व मीटर रीडिंग डेटा कायमचा क्लीन केला! (All Data Cleared)"
                 )
             }
             refreshDbStats()
@@ -1397,8 +1419,19 @@ class MeterViewModel(
 
     fun deleteReading(reading: MeterReading) {
         viewModelScope.launch {
+            val custName = _uiState.value.customers.find { it.id == reading.customerId }?.name
+                ?: _uiState.value.selectedCustomer?.name
+                ?: ""
             repository.deleteReading(reading)
-            _uiState.update { it.copy(statusMessage = "रीडिंग हटाई गई (Reading Deleted)") }
+            runCatching {
+                teamSyncRepository?.deleteReadingFromCloud(
+                    customerName = custName,
+                    readingDate = reading.readingDate,
+                    timestamp = reading.timestamp,
+                    kwh = reading.kwh
+                )
+            }
+            _uiState.update { it.copy(statusMessage = "रीडिंग कायमची हटवली (Reading Deleted)") }
             refreshDbStats()
         }
     }
