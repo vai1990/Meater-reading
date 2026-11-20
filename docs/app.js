@@ -6,16 +6,18 @@
   const SESSION_KEY = 'smart_meter_pro_session_v1';
   const PREF_LANG_KEY = 'smart_meter_pro_lang_v1';
 
-  const FIREBASE_CONFIG = {
-    apiKey: 'AIzaSyAMW1Iir84mvLoprAL461YfalV-ISx19j4',
-    authDomain: 'gen-lang-client-0644163839.firebaseapp.com',
-    projectId: 'gen-lang-client-0644163839',
-    storageBucket: 'gen-lang-client-0644163839.firebasestorage.app',
-    messagingSenderId: '418787384815',
-    appId: '1:418787384815:web:30e8e982723daebe7c2a1a'
+  let cloudUnsubscribe = null;
+  let cloudAuthBound = false;
+  let cloudState = {
+    connected: false,
+    syncing: false,
+    activeWorkspace: null,
+    workspaces: [],
+    lastCloudSyncTs: 0,
+    lastCloudError: '',
+    cloudCustomerCount: 0,
+    cloudReadingCount: 0
   };
-
-  let firebaseAuth = null;
 
   const THEMES = [
     { id: 'cyber', className: 'theme-cyber', isDark: true, labelMr: 'सायबर डार्क निऑन', labelEn: 'Cyber Dark Neon', start: '#060B14', primary: '#38BDF8' },
@@ -1434,12 +1436,22 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
 
         <div class="card">
           <div class="card-header">
-            <div class="card-title">👤 ${t('युजर खाते व लॉगआउट', 'User Account & Sign Out')}</div>
+            <div class="card-title">☁️ ${t('मोबाईल क्लाउड सिंक व युजर खाते', 'Mobile Cloud Sync & Account')}</div>
           </div>
-          <p class="field-help" style="margin-bottom:12px;">
-            ${currentUser ? `<strong>${esc(currentUser.name || 'User')}</strong> (${esc(currentUser.email || '')}) — ${currentUser.provider === 'google' ? 'Google Sign-In' : t('लोकल खाते', 'Local Account')}` : ''}
+          <p class="field-help" style="margin-bottom:10px;">
+            ${currentUser ? `<strong>${esc(currentUser.name || 'User')}</strong> (${esc(currentUser.email || '')})` : ''}<br/>
+            ${currentUser?.provider === 'google'
+              ? (cloudState.connected
+                  ? `<span style="color:#10B981;font-weight:700;">✅ ${t('मोबाईल क्लाउडशी जोडलेले आहे (Live Sync)', 'Connected to Mobile Cloud (Live Sync)')}</span>${cloudState.activeWorkspace?.inviteCode ? ` • Team: <span class="mono">${esc(cloudState.activeWorkspace.inviteCode)}</span>` : ''}`
+                  : `<span style="color:#F59E0B;font-weight:700;">⏳ ${t('क्लाउड कनेक्शन तपासत आहे...', 'Connecting to Cloud...')}</span>`)
+              : `<span style="color:#F59E0B;font-weight:700;">⚠️ ${t('लोकल खाते — मोबाईल डेटा पाहण्यासाठी Google ने लॉगिन करा', 'Local account — Sign in with Google to sync Mobile App data')}</span>`
+            }
           </p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${currentUser?.provider === 'google'
+              ? `<button class="btn btn-emerald" type="button" data-action="cloud-sync-now" ${cloudState.syncing ? 'disabled' : ''}>🔄 ${cloudState.syncing ? t('सिंक सुरू...', 'Syncing...') : t('मोबाईल डेटा सिंक करा', 'Sync with Mobile')}</button>`
+              : `<button class="btn btn-emerald" type="button" data-action="switch-google">🌐 ${t('Google ने लॉगिन करा', 'Sign in with Google')}</button>`
+            }
             <button class="btn btn-outline" type="button" data-action="open-account">⚙️ ${t('खाते सेटिंग्ज', 'Account Settings')}</button>
             <button class="btn btn-danger" type="button" data-action="sign-out">🚪 ${t('लॉगआउट करा', 'Sign Out')}</button>
           </div>
@@ -1548,6 +1560,8 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
         else if (act === 'print-pdf') window.print();
         else if (act === 'backup-json') exportBackupJson();
         else if (act === 'open-account') openAccountModal();
+        else if (act === 'cloud-sync-now') syncCloudNow(false);
+        else if (act === 'switch-google') triggerGoogleSignInFromApp();
         else if (act === 'sign-out') signOutUser();
         else if (act === 'clear-all-data') clearAllData();
       });
@@ -1739,6 +1753,7 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
         state.selectedCustomerId = payload.id;
       }
       saveState();
+      pushSingleCustomerToCloud(payload);
       closeModal();
       render();
       showToast(t('ग्राहक जतन केला!', 'Customer saved!'));
@@ -1853,6 +1868,8 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
 
       recalculateCustomerDeltas(cust.id);
       saveState();
+      const savedReading = state.readings.find(r => r.id === item.id) || item;
+      pushSingleReadingToCloud(cust, savedReading);
       closeModal();
       render();
       showToast(t('मीटर रीडिंग जतन केली (Auto PF)!', 'Reading saved with Auto PF!'));
@@ -2075,12 +2092,337 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     showToast(t('JSON बॅकअप फाईल डाउनलोड झाली!', 'JSON backup downloaded!'));
   }
 
+  // ---------- Firebase Firestore Cloud Sync (2-Way with Android Mobile App) ----------
+  function isGenericMeterString(meter) {
+    const m = String(meter || '').trim().toUpperCase();
+    return !m || m === 'UNKNOWN' || m === 'N/A' || m === 'MTR-N/A' ||
+      m.startsWith('SHEET-MTR-') || /^MTR-\d+$/.test(m);
+  }
+
+  function isMatchingCustomer(local, remoteName, remoteMeter) {
+    const lName = String(local.name || '').trim().toLowerCase();
+    const rName = String(remoteName || '').trim().toLowerCase();
+    if (!lName || lName !== rName) return false;
+    const lMeter = String(local.meterNumber || '').trim().toLowerCase();
+    const rMeter = String(remoteMeter || '').trim().toLowerCase();
+    return lMeter === rMeter || isGenericMeterString(lMeter) || isGenericMeterString(rMeter);
+  }
+
+  function mergeCloudCustomers(cloudCustomers) {
+    if (!Array.isArray(cloudCustomers) || cloudCustomers.length === 0) return false;
+    let changed = false;
+    for (const cc of cloudCustomers) {
+      const cName = String(cc.name || '').trim();
+      if (!cName) continue;
+      const cMeter = String(cc.meterNumber || '').trim();
+      let existing = state.customers.find(c => (cc.id && c.cloudId === cc.id) || isMatchingCustomer(c, cName, cMeter));
+      if (!existing) {
+        const newCust = {
+          id: 'c_cloud_' + (cc.id || (Date.now() + '_' + Math.random().toString(36).slice(2, 6))),
+          cloudId: cc.id || '',
+          name: cName,
+          address: String(cc.address || '').trim(),
+          meterNumber: cMeter || 'MTR-01',
+          consumerNumber: String(cc.consumerNumber || '').trim(),
+          phoneNumber: String(cc.phoneNumber || '').trim(),
+          connectionType: String(cc.connectionType || '3-Phase Industrial').trim(),
+          sanctionedLoad: String(cc.sanctionedLoad || '50 kW').trim() || '50 kW'
+        };
+        state.customers.push(newCust);
+        changed = true;
+      } else {
+        if (!existing.cloudId && cc.id) { existing.cloudId = cc.id; changed = true; }
+        if (isGenericMeterString(existing.meterNumber) && cMeter && !isGenericMeterString(cMeter)) {
+          existing.meterNumber = cMeter; changed = true;
+        }
+        if (!existing.address && cc.address) { existing.address = String(cc.address).trim(); changed = true; }
+        if (!existing.consumerNumber && cc.consumerNumber) { existing.consumerNumber = String(cc.consumerNumber).trim(); changed = true; }
+        if (!existing.sanctionedLoad && cc.sanctionedLoad) { existing.sanctionedLoad = String(cc.sanctionedLoad).trim(); changed = true; }
+      }
+    }
+    if (!state.selectedCustomerId && state.customers.length > 0) {
+      state.selectedCustomerId = state.customers[0].id;
+      changed = true;
+    }
+    return changed;
+  }
+
+  function mergeCloudReadings(cloudReadings) {
+    if (!Array.isArray(cloudReadings) || cloudReadings.length === 0) return false;
+    let changed = false;
+    const touchedCustIds = new Set();
+
+    for (const cr of cloudReadings) {
+      const cName = String(cr.customerName || '').trim();
+      const cMeter = String(cr.customerMeterNumber || '').trim();
+      if (!cName) continue;
+
+      let cust = state.customers.find(c => isMatchingCustomer(c, cName, cMeter));
+      if (!cust) {
+        cust = {
+          id: 'c_cloud_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          name: cName,
+          address: '',
+          meterNumber: cMeter || 'MTR-01',
+          consumerNumber: '',
+          phoneNumber: '',
+          connectionType: '3-Phase Industrial',
+          sanctionedLoad: '50 kW'
+        };
+        state.customers.push(cust);
+        changed = true;
+      }
+
+      const ts = Number(cr.readingTimestamp) || dateTimeToMillis(cr.readingDate, cr.readingTime);
+      const kwh = Number(cr.kwh) || 0;
+      const kvarh = Number(cr.kvarh) || 0;
+      const kvah = Number(cr.kvah) || calculateKvahFromKvarh(kwh, kvarh);
+      const pf = Number(cr.powerFactor) > 0 ? Number(cr.powerFactor) : calculateAutoPf(kwh, kvarh, kvah);
+
+      const matchIdx = state.readings.findIndex(r =>
+        r.customerId === cust.id && (
+          (cr.id && r.cloudId === cr.id) ||
+          (ts > 0 && Math.abs((r.timestamp || 0) - ts) < 60000) ||
+          (r.readingDate === cr.readingDate && Math.abs((Number(r.kwh) || 0) - kwh) < 0.01)
+        )
+      );
+
+      if (matchIdx < 0) {
+        state.readings.push({
+          id: 'r_cloud_' + (cr.id || (ts + '_' + Math.random().toString(36).slice(2, 6))),
+          cloudId: cr.id || '',
+          customerId: cust.id,
+          readingDate: String(cr.readingDate || formatDateDisplay(new Date(ts))),
+          readingTime: String(cr.readingTime || '10:00 AM'),
+          timestamp: ts,
+          kwh,
+          kvarh,
+          kvah,
+          powerFactor: pf,
+          isPfAutoCalculated: cr.isPfAutoCalculated !== false,
+          previousKwh: cr.previousKwh > 0 ? Number(cr.previousKwh) : null,
+          unitsConsumed: cr.unitsConsumed > 0 ? Number(cr.unitsConsumed) : null,
+          remarks: String(cr.remarks || '')
+        });
+        touchedCustIds.add(cust.id);
+        changed = true;
+      } else if (!state.readings[matchIdx].cloudId && cr.id) {
+        state.readings[matchIdx].cloudId = cr.id;
+        changed = true;
+      }
+    }
+
+    for (const cid of touchedCustIds) {
+      recalculateCustomerDeltas(cid);
+    }
+    if (!state.selectedCustomerId && state.customers.length > 0) {
+      state.selectedCustomerId = state.customers[0].id;
+      changed = true;
+    }
+    return changed;
+  }
+
+  function stopCloudSync() {
+    if (cloudUnsubscribe) {
+      try { cloudUnsubscribe(); } catch {}
+      cloudUnsubscribe = null;
+    }
+    cloudState = {
+      connected: false,
+      syncing: false,
+      activeWorkspace: null,
+      workspaces: [],
+      lastCloudSyncTs: 0,
+      lastCloudError: '',
+      cloudCustomerCount: 0,
+      cloudReadingCount: 0
+    };
+  }
+
+  async function startCloudSync(fbUser) {
+    const cloud = window.SmartMeterCloud;
+    if (!cloud || !fbUser) return;
+    if (cloudUnsubscribe) {
+      try { cloudUnsubscribe(); } catch {}
+      cloudUnsubscribe = null;
+    }
+
+    const uid = fbUser.uid;
+    const displayName = fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'User');
+    cloudState.syncing = true;
+    cloudState.lastCloudError = '';
+
+    try {
+      const ws = await cloud.ensureWorkspace(uid, displayName);
+      cloudState.activeWorkspace = ws;
+    } catch (err) {
+      console.warn('ensureWorkspace failed:', err);
+      cloudState.lastCloudError = err?.message || String(err);
+    }
+
+    let firstToastShown = false;
+    cloudUnsubscribe = cloud.subscribeCloudData(uid, {
+      onWorkspaces: list => {
+        cloudState.workspaces = list;
+        if (list.length > 0) {
+          const curCode = cloudState.activeWorkspace?.inviteCode;
+          cloudState.activeWorkspace = list.find(w => w.inviteCode === curCode) || list[0];
+        }
+        cloudState.connected = true;
+        cloudState.syncing = false;
+        cloudState.lastCloudSyncTs = Date.now();
+        if (currentUser && state.currentTab === 3) render();
+      },
+      onCustomers: cloudCustomers => {
+        cloudState.connected = true;
+        cloudState.syncing = false;
+        cloudState.cloudCustomerCount = cloudCustomers.length;
+        cloudState.lastCloudSyncTs = Date.now();
+        const changed = mergeCloudCustomers(cloudCustomers);
+        if (changed) {
+          saveState();
+          render();
+          if (!firstToastShown && cloudCustomers.length > 0) {
+            firstToastShown = true;
+            showToast(t(
+              `☁️ मोबाईल क्लाउडमधून ${cloudCustomers.length} ग्राहक सिंक झाले!`,
+              `☁️ Synced ${cloudCustomers.length} customers from Mobile Cloud!`
+            ));
+          }
+        }
+      },
+      onReadings: cloudReadings => {
+        cloudState.connected = true;
+        cloudState.syncing = false;
+        cloudState.cloudReadingCount = cloudReadings.length;
+        cloudState.lastCloudSyncTs = Date.now();
+        const changed = mergeCloudReadings(cloudReadings);
+        if (changed) {
+          saveState();
+          render();
+          if (!firstToastShown && cloudReadings.length > 0) {
+            firstToastShown = true;
+            showToast(t(
+              `☁️ मोबाईल क्लाउडमधून ${cloudReadings.length} रीडिंग्स सिंक झाल्या!`,
+              `☁️ Synced ${cloudReadings.length} readings from Mobile Cloud!`
+            ));
+          }
+        }
+      },
+      onError: (col, err) => {
+        console.warn('Cloud listener error:', col, err);
+        cloudState.syncing = false;
+        cloudState.lastCloudError = `${col}: ${err?.message || err}`;
+      }
+    });
+  }
+
+  async function syncCloudNow(silent) {
+    const cloud = window.SmartMeterCloud;
+    const fbUser = cloud?.getCurrentFirebaseUser();
+    if (!cloud || !fbUser) {
+      if (!silent) {
+        showToast(t('कृपया आधी Google खात्याने लॉगिन करा.', 'Please sign in with Google first.'));
+      }
+      return;
+    }
+    cloudState.syncing = true;
+    render();
+    try {
+      const uid = fbUser.uid;
+      const displayName = fbUser.displayName || currentUser?.name || 'User';
+      const ws = cloudState.activeWorkspace || await cloud.ensureWorkspace(uid, displayName);
+      cloudState.activeWorkspace = ws;
+
+      // 1. Pull latest from Mobile Cloud
+      const snap = await cloud.fetchCloudSnapshotNow(uid);
+      cloudState.workspaces = snap.workspaces;
+      if (snap.workspaces.length > 0) {
+        cloudState.activeWorkspace = snap.workspaces[0];
+      }
+      cloudState.cloudCustomerCount = snap.customers.length;
+      cloudState.cloudReadingCount = snap.readings.length;
+      mergeCloudCustomers(snap.customers);
+      mergeCloudReadings(snap.readings);
+      saveState();
+
+      // 2. Push any local web customers/readings back to Cloud so Mobile gets them too
+      const activeWs = cloudState.activeWorkspace;
+      if (activeWs) {
+        for (const c of state.customers) {
+          try { await cloud.pushCustomer(activeWs, c, uid, displayName); } catch {}
+        }
+        for (const r of state.readings) {
+          const c = state.customers.find(x => x.id === r.customerId);
+          if (c) {
+            try { await cloud.pushReading(activeWs, c, r, uid, displayName); } catch {}
+          }
+        }
+      }
+
+      cloudState.connected = true;
+      cloudState.lastCloudSyncTs = Date.now();
+      cloudState.lastCloudError = '';
+      if (!silent) {
+        if (snap.customers.length === 0 && snap.readings.length === 0) {
+          showToast(t(
+            'क्लाउड जोडले गेले, पण या Google खात्यात अजून मोबाईल डेटा अपलोड नाही. मोबाईल अ‍ॅपमध्ये "Cloud Sync" एकदा दाबा!',
+            'Cloud connected, but no mobile records uploaded yet. Open Mobile App and tap Cloud Sync once!'
+          ));
+        } else {
+          showToast(t(
+            `☁️ सिंक पूर्ण! ${snap.customers.length} ग्राहक आणि ${snap.readings.length} रीडिंग्स क्लाउडवरून लोड झाल्या.`,
+            `☁️ Sync complete! Loaded ${snap.customers.length} customers & ${snap.readings.length} readings from Cloud.`
+          ));
+        }
+      }
+    } catch (err) {
+      cloudState.lastCloudError = err?.message || String(err);
+      if (!silent) {
+        showToast(t(`क्लाउड सिंक त्रुटी: ${cloudState.lastCloudError}`, `Cloud sync error: ${cloudState.lastCloudError}`));
+      }
+    } finally {
+      cloudState.syncing = false;
+      render();
+    }
+  }
+
+  async function pushSingleCustomerToCloud(customer) {
+    const cloud = window.SmartMeterCloud;
+    const fbUser = cloud?.getCurrentFirebaseUser();
+    if (!cloud || !fbUser || currentUser?.provider !== 'google') return;
+    try {
+      const ws = cloudState.activeWorkspace || await cloud.ensureWorkspace(fbUser.uid, fbUser.displayName || currentUser.name);
+      cloudState.activeWorkspace = ws;
+      await cloud.pushCustomer(ws, customer, fbUser.uid, fbUser.displayName || currentUser.name);
+    } catch (err) {
+      console.warn('Cloud push customer skipped:', err);
+    }
+  }
+
+  async function pushSingleReadingToCloud(customer, reading) {
+    const cloud = window.SmartMeterCloud;
+    const fbUser = cloud?.getCurrentFirebaseUser();
+    if (!cloud || !fbUser || currentUser?.provider !== 'google') return;
+    try {
+      const ws = cloudState.activeWorkspace || await cloud.ensureWorkspace(fbUser.uid, fbUser.displayName || currentUser.name);
+      cloudState.activeWorkspace = ws;
+      await cloud.pushCustomer(ws, customer, fbUser.uid, fbUser.displayName || currentUser.name);
+      await cloud.pushReading(ws, customer, reading, fbUser.uid, fbUser.displayName || currentUser.name);
+    } catch (err) {
+      console.warn('Cloud push reading skipped:', err);
+    }
+  }
+
   // ---------- User Account Modal & Auth Flow ----------
   function openAccountModal() {
     if (!currentUser) return;
     const isLocal = currentUser.provider !== 'google';
+    const fbUser = window.SmartMeterCloud?.getCurrentFirebaseUser();
+    const wsCode = cloudState.activeWorkspace?.inviteCode || '';
+
     openModal(
-      t('👤 युजर खाते (User Account)', '👤 User Account'),
+      t('👤 युजर खाते व मोबाईल क्लाउड सिंक', '👤 Account & Mobile Cloud Sync'),
       `
         <div class="card" style="background:var(--surface-variant);margin-bottom:4px;">
           <div style="display:flex;align-items:center;gap:12px;">
@@ -2091,17 +2433,30 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
               <div style="font-size:15px;font-weight:800;">${esc(currentUser.name || 'User')}</div>
               <div style="font-size:12px;color:var(--text-subtle);word-break:break-all;">${esc(currentUser.email || '')}</div>
               <div style="margin-top:4px;font-size:11px;font-weight:700;color:var(--primary);">
-                ${isLocal ? t('🔐 लोकल युजर खाते (Email / Username)', '🔐 Local User Account') : '🌐 Google Account'}
+                ${isLocal ? t('🔐 लोकल युजर खाते (Browser Only)', '🔐 Local User Account (Browser Only)') : '☁️ Google Account (Cloud Sync)'}
               </div>
             </div>
           </div>
           <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--text-subtle);">
-            ${t(`या खात्यात ${state.customers.length} ग्राहक आणि ${state.readings.length} मीटर रीडिंग्स जतन आहेत.`,
-              `${state.customers.length} customers and ${state.readings.length} readings saved in this account.`)}
+            ${t(`सध्या दिसणारा डेटा: ${state.customers.length} ग्राहक • ${state.readings.length} मीटर रीडिंग्स`,
+              `Current data: ${state.customers.length} customers • ${state.readings.length} meter readings`)}
           </div>
         </div>
 
         ${isLocal ? `
+          <div class="card" style="background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.35);">
+            <div style="font-size:13px;font-weight:800;color:#F59E0B;margin-bottom:6px;">
+              📱 ${t('मोबाईल अ‍ॅपमधील डेटा इथे आणायचा आहे का?', 'Want your Mobile App data here?')}
+            </div>
+            <p style="font-size:12px;color:var(--text-muted);line-height:1.45;margin-bottom:10px;">
+              ${t('तुम्ही सध्या लोकल खात्याने लॉगिन आहात. मोबाईल अ‍ॅपमधील सर्व ग्राहक व रीडिंग्स थेट पाहण्यासाठी मोबाईलमध्ये वापरलेल्या त्याच Google खात्याने लॉगिन करा.',
+                'You are signed into a browser-only local account. Sign in with the same Google account used in your Mobile App to sync all customers and readings.')}
+            </p>
+            <button id="accSwitchGoogleBtn" class="btn btn-emerald btn-sm" style="width:100%;" type="button">
+              🌐 ${t('Google खात्याने लॉगिन करा (Sync Mobile Data)', 'Sign in with Google (Sync Mobile Data)')}
+            </button>
+          </div>
+
           <div class="card" style="background:var(--surface-variant);">
             <div style="font-size:13px;font-weight:800;margin-bottom:8px;">🔑 ${t('पासवर्ड बदला', 'Change Password')}</div>
             <div style="display:flex;flex-direction:column;gap:8px;">
@@ -2112,7 +2467,40 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
               </button>
             </div>
           </div>
-        ` : ''}
+        ` : `
+          <div class="card" style="background:var(--surface-variant);">
+            <div style="font-size:13px;font-weight:800;margin-bottom:6px;">
+              ☁️ ${t('मोबाईल अ‍ॅप क्लाउड सिंक (Live)', 'Mobile App Cloud Sync (Live)')}
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:10px;">
+              ${fbUser
+                ? `${cloudState.connected ? '✅' : '⏳'} ${t('क्लाउड स्थिती:', 'Status:')} <strong>${cloudState.connected ? t('जोडलेले (Connected)', 'Connected') : t('कनेक्ट होत आहे...', 'Connecting...')}</strong><br/>
+                   ${wsCode ? `${t('टीम कोड (Team Code):', 'Team Code:')} <span class="mono" style="color:var(--primary);font-weight:800;">${esc(wsCode)}</span><br/>` : ''}
+                   ${t(`क्लाउडवर सापडलेला डेटा: ${cloudState.cloudCustomerCount} ग्राहक, ${cloudState.cloudReadingCount} रीडिंग्स`,
+                     `Cloud records found: ${cloudState.cloudCustomerCount} customers, ${cloudState.cloudReadingCount} readings`)}`
+                : `<span style="color:#F59E0B;">⚠️ ${t('Google क्लाउड सेशन पुन्हा कनेक्ट करा.', 'Reconnect your Google Cloud session.')}</span>`
+              }
+              ${cloudState.lastCloudError ? `<div style="color:#EF4444;margin-top:4px;">${esc(cloudState.lastCloudError)}</div>` : ''}
+            </div>
+
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+              ${fbUser
+                ? `<button id="accCloudSyncBtn" class="btn btn-emerald btn-sm" style="flex:1;" type="button">🔄 ${t('आता क्लाउड सिंक करा', 'Sync Cloud Now')}</button>`
+                : `<button id="accSwitchGoogleBtn" class="btn btn-emerald btn-sm" style="flex:1;" type="button">🌐 ${t('Google पुन्हा कनेक्ट करा', 'Reconnect Google')}</button>`
+              }
+            </div>
+
+            ${fbUser ? `
+              <div style="border-top:1px solid var(--border);padding-top:10px;">
+                <label class="field-label" style="margin-bottom:5px;display:block;">${t('मोबाईलमधील Team Code ने जोडा (ऐच्छिक)', 'Join Mobile App Team Code (Optional)')}</label>
+                <div style="display:flex;gap:6px;">
+                  <input id="accTeamCodeInput" class="input mono" placeholder="TEAM_XXXXXX" style="flex:1;" />
+                  <button id="accJoinTeamBtn" class="btn btn-outline btn-sm" type="button">${t('जोडा', 'Join')}</button>
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        `}
       `,
       `
         <button class="btn btn-outline" type="button" id="closeAccBtn">${t('बंद करा', 'Close')}</button>
@@ -2122,6 +2510,43 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
 
     document.getElementById('closeAccBtn').onclick = closeModal;
     document.getElementById('logoutModalBtn').onclick = signOutUser;
+
+    const swBtn = document.getElementById('accSwitchGoogleBtn');
+    if (swBtn) {
+      swBtn.onclick = () => {
+        closeModal();
+        triggerGoogleSignInFromApp();
+      };
+    }
+
+    const syncBtn = document.getElementById('accCloudSyncBtn');
+    if (syncBtn) {
+      syncBtn.onclick = async () => {
+        closeModal();
+        await syncCloudNow(false);
+      };
+    }
+
+    const joinBtn = document.getElementById('accJoinTeamBtn');
+    if (joinBtn) {
+      joinBtn.onclick = async () => {
+        const code = (document.getElementById('accTeamCodeInput').value || '').trim().toUpperCase();
+        if (code.length < 3) {
+          showToast(t('कृपया वैध Team Code टाका.', 'Please enter a valid Team Code.'));
+          return;
+        }
+        try {
+          const fbU = window.SmartMeterCloud.getCurrentFirebaseUser();
+          const ws = await window.SmartMeterCloud.joinWorkspace(code, fbU.uid, fbU.displayName || currentUser.name);
+          cloudState.activeWorkspace = ws;
+          closeModal();
+          await syncCloudNow(false);
+          showToast(t(`टीम "${ws.inviteCode}" यशस्वीरित्या जोडली गेली!`, `Joined team "${ws.inviteCode}"!`));
+        } catch (err) {
+          showToast(t(`टीम जोडता आली नाही: ${err?.message || err}`, `Failed to join team: ${err?.message || err}`));
+        }
+      };
+    }
 
     const chBtn = document.getElementById('accChangePassBtn');
     if (chBtn) {
@@ -2175,7 +2600,7 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
 
     document.getElementById('authSubtitle').textContent = isReg
       ? t('नवीन युजर खाते तयार करा आणि मीटर रीडिंग सुरू करा', 'Create a new account to manage meter readings')
-      : t('दैनिक मीटर रीडिंग व Google Sheet सिंकसाठी लॉगिन करा', 'Sign in to access Daily Meter Readings & Google Sheet Sync');
+      : t('दैनिक मीटर रीडिंग व मोबाईल क्लाउड सिंकसाठी लॉगिन करा', 'Sign in to access Daily Meter Readings & Mobile Cloud Sync');
 
     document.getElementById('authNameLabel').textContent = t('पूर्ण नाव (Full Name) *', 'Full Name *');
     document.getElementById('authNameInput').placeholder = t('उदा. वैभव घाग', 'e.g. Vaibhav Ghag');
@@ -2189,12 +2614,13 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
       ? t('✨ खाते तयार करा व लॉगिन करा', '✨ Create Account & Sign In')
       : t('🔐 लॉगिन करा (Sign In)', '🔐 Sign In');
     document.getElementById('authOrText').textContent = t('किंवा (OR)', 'OR');
-    document.getElementById('googleSignInLabel').textContent = t('Google खात्याने लॉगिन करा (Sign in with Google)', 'Sign in with Google');
-    document.getElementById('authNoteText').textContent = t('प्रत्येक युजरचा डेटा स्वतंत्र व सुरक्षित राहतो.', 'Each user has isolated, private storage.');
+    document.getElementById('googleSignInLabel').textContent = t('Google खात्याने लॉगिन करा (मोबाईल डेटा सिंक)', 'Sign in with Google (Sync Mobile App)');
+    document.getElementById('authNoteText').textContent = t('मोबाईल अ‍ॅपमधील डेटा पाहण्यासाठी त्याच Google खात्याने लॉगिन करा.', 'Sign in with your Mobile App Google account to view cloud data.');
     document.getElementById('authLangBtn').textContent = state.isMr ? 'EN' : 'मराठी';
   }
 
   function showAuthGate() {
+    stopCloudSync();
     document.getElementById('appContainer').classList.add('hidden');
     document.getElementById('authScreen').classList.remove('hidden');
     const theme = THEMES.find(th => th.id === state.branding.themeId) || THEMES[0];
@@ -2203,7 +2629,7 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     updateAuthScreenText();
   }
 
-  function showAppForUser(user) {
+  function showAppForUser(user, fbUser) {
     currentUser = user;
     saveSession(user);
     state = loadState();
@@ -2211,6 +2637,12 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     document.getElementById('appContainer').classList.remove('hidden');
     showAuthError('');
     render();
+    if (user.provider === 'google') {
+      const liveFbUser = fbUser || window.SmartMeterCloud?.getCurrentFirebaseUser();
+      if (liveFbUser) {
+        startCloudSync(liveFbUser);
+      }
+    }
     if (state.sheetConfig.sheetUrl) {
       syncGoogleSheetFromUrl(state.sheetConfig.sheetUrl, state.sheetConfig.tabNamesCsv, true);
     }
@@ -2219,10 +2651,11 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
   async function signOutUser() {
     closeModal();
     const wasGoogle = currentUser?.provider === 'google';
+    stopCloudSync();
     currentUser = null;
     saveSession(null);
-    if (wasGoogle && firebaseAuth) {
-      try { await firebaseAuth.signOut(); } catch {}
+    if (wasGoogle && window.SmartMeterCloud) {
+      try { await window.SmartMeterCloud.signOutGoogle(); } catch {}
     }
     const prevMr = state.isMr;
     const prevTheme = state.branding.themeId;
@@ -2234,27 +2667,82 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     showToast(t('तुम्ही यशस्वीरित्या लॉगआउट झाले आहात.', 'Signed out successfully.'));
   }
 
-  function initFirebaseAuth() {
-    try {
-      if (window.firebase && typeof window.firebase.initializeApp === 'function') {
-        if (!window.firebase.apps || window.firebase.apps.length === 0) {
-          window.firebase.initializeApp(FIREBASE_CONFIG);
+  function bindCloudBridge() {
+    const cloud = window.SmartMeterCloud;
+    if (!cloud || cloudAuthBound) return;
+    cloudAuthBound = true;
+    cloud.onAuthChange(fbUser => {
+      if (fbUser) {
+        const gUser = {
+          id: 'g_' + fbUser.uid,
+          uid: fbUser.uid,
+          name: fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'Google User'),
+          email: fbUser.email || '',
+          provider: 'google'
+        };
+        if (!currentUser) {
+          showAppForUser(gUser, fbUser);
+        } else if (currentUser.provider === 'google' && currentUser.id === gUser.id) {
+          startCloudSync(fbUser);
         }
-        firebaseAuth = window.firebase.auth();
-        firebaseAuth.onAuthStateChanged(fbUser => {
-          if (fbUser && !currentUser) {
-            showAppForUser({
-              id: 'g_' + fbUser.uid,
-              name: fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'Google User'),
-              email: fbUser.email || '',
-              provider: 'google'
-            });
-          }
-        });
       }
-    } catch (err) {
-      console.warn('Firebase init skipped:', err);
+    });
+  }
+
+  async function performGoogleSignIn(fromInsideApp) {
+    showAuthError('');
+    const cloud = window.SmartMeterCloud;
+    if (!cloud) {
+      const msg = t(
+        'Google क्लाउड सेवा लोड होत आहे, कृपया २ सेकंदांनी पुन्हा प्रयत्न करा.',
+        'Google Cloud service is still loading. Please try again in 2 seconds.'
+      );
+      if (fromInsideApp) showToast(msg);
+      else showAuthError(msg);
+      return;
     }
+
+    const btn = document.getElementById('googleSignInBtn');
+    if (btn) btn.disabled = true;
+    try {
+      const u = await cloud.signInWithGoogle();
+      showAppForUser({
+        id: 'g_' + u.uid,
+        uid: u.uid,
+        name: u.displayName || (u.email ? u.email.split('@')[0] : 'Google User'),
+        email: u.email || '',
+        provider: 'google'
+      }, u);
+      showToast(t(
+        `Google लॉगिन यशस्वी (${u.displayName || u.email})! मोबाईल क्लाउड डेटा सिंक होत आहे...`,
+        `Signed in with Google (${u.displayName || u.email})! Syncing Mobile Cloud data...`
+      ));
+    } catch (err) {
+      const code = err?.code || '';
+      let msg;
+      if (code === 'auth/unauthorized-domain') {
+        const host = window.location.hostname || 'this domain';
+        msg = t(
+          `Google Sign-In साठी Firebase Console → Authentication → Settings → Authorized domains मध्ये "${host}" जोडावे लागेल.`,
+          `Add "${host}" under Firebase Console → Authentication → Settings → Authorized domains to enable Google Sign-In.`
+        );
+      } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        msg = t('Google लॉगिन रद्द केले गेले.', 'Google sign-in popup was closed.');
+      } else {
+        msg = t(
+          `Google लॉगिन त्रुटी: ${err?.message || code || 'अज्ञात त्रुटी'}`,
+          `Google sign-in error: ${err?.message || code || 'Unknown error'}`
+        );
+      }
+      if (fromInsideApp) showToast(msg);
+      else showAuthError(msg);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function triggerGoogleSignInFromApp() {
+    performGoogleSignIn(true);
   }
 
   // Auth screen listeners
@@ -2321,12 +2809,12 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
       showToast(t(`स्वागत आहे, ${newUser.name}! नवीन खाते तयार झाले.`, `Welcome, ${newUser.name}! Account created.`));
     } else {
       if (users.length === 0) {
-        showAuthError(t('अजून कोणतेही खाते तयार केलेले नाही. कृपया आधी "नवीन खाते (Register)" टॅबवरून नोंदणी करा.', 'No account exists yet. Please click "Register" first to create your account.'));
+        showAuthError(t('अजून कोणतेही खाते तयार केलेले नाही. कृपया आधी "नवीन खाते (Register)" टॅबवरून नोंदणी करा किंवा खाली Google ने लॉगिन करा.', 'No local account exists yet. Click "Register" or use Google Sign-In below.'));
         return;
       }
       const found = users.find(u => u.emailLower === normId);
       if (!found) {
-        showAuthError(t('हा ईमेल / युजरनेम सापडला नाही. नवीन खात्यासाठी Register निवडा.', 'Email/username not found. Switch to Register to create an account.'));
+        showAuthError(t('हा ईमेल / युजरनेम सापडला नाही. नवीन खात्यासाठी Register निवडा किंवा Google ने लॉगिन करा.', 'Email/username not found. Switch to Register or use Google Sign-In.'));
         return;
       }
       const passwordHash = await hashPassword(pass);
@@ -2340,48 +2828,8 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     }
   });
 
-  document.getElementById('googleSignInBtn').addEventListener('click', async () => {
-    showAuthError('');
-    if (!firebaseAuth) initFirebaseAuth();
-    if (!firebaseAuth || !window.firebase?.auth?.GoogleAuthProvider) {
-      showAuthError(t(
-        'Google Sign-In लोड होऊ शकले नाही. कृपया इंटरनेट तपासा किंवा ईमेल/पासवर्ड लॉगिन वापरा.',
-        'Google Sign-In could not load. Check your internet or use Email/Password login.'
-      ));
-      return;
-    }
-    const btn = document.getElementById('googleSignInBtn');
-    btn.disabled = true;
-    try {
-      const provider = new window.firebase.auth.GoogleAuthProvider();
-      const res = await firebaseAuth.signInWithPopup(provider);
-      const u = res.user;
-      showAppForUser({
-        id: 'g_' + u.uid,
-        name: u.displayName || (u.email ? u.email.split('@')[0] : 'Google User'),
-        email: u.email || '',
-        provider: 'google'
-      });
-      showToast(t(`Google खात्याने लॉगिन यशस्वी (${u.displayName || u.email})!`, `Signed in with Google (${u.displayName || u.email})!`));
-    } catch (err) {
-      const code = err?.code || '';
-      if (code === 'auth/unauthorized-domain') {
-        const host = window.location.hostname || 'this domain';
-        showAuthError(t(
-          `Google Sign-In साठी Firebase Console → Authentication → Settings → Authorized domains मध्ये "${host}" जोडावे लागेल. तोपर्यंत वरचा ईमेल/युजरनेम व पासवर्ड लॉगिन तात्काळ वापरा!`,
-          `To enable Google Sign-In on "${host}", add it in Firebase Console → Authentication → Settings → Authorized domains. Meanwhile, you can sign in immediately with Email/Username & Password above!`
-        ));
-      } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-        showAuthError(t('Google लॉगिन रद्द केले गेले.', 'Google sign-in popup was closed.'));
-      } else {
-        showAuthError(t(
-          `Google लॉगिन त्रुटी: ${err?.message || code || 'अज्ञात त्रुटी'}. कृपया ईमेल/पासवर्ड लॉगिन वापरा.`,
-          `Google sign-in error: ${err?.message || code || 'Unknown error'}. Please use Email/Password login.`
-        ));
-      }
-    } finally {
-      btn.disabled = false;
-    }
+  document.getElementById('googleSignInBtn').addEventListener('click', () => {
+    performGoogleSignIn(false);
   });
 
   // ---------- Global Header Controls ----------
@@ -2409,8 +2857,14 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     render();
   });
 
-  // Initialize Auth & Boot App
-  initFirebaseAuth();
+  // Bind Firebase Modular Cloud Bridge (when already loaded or as soon as ready)
+  if (window.SmartMeterCloud) {
+    bindCloudBridge();
+  } else {
+    window.addEventListener('smartmeter-cloud-ready', bindCloudBridge, { once: true });
+  }
+
+  // Boot App
   if (currentUser) {
     showAppForUser(currentUser);
   } else {

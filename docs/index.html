@@ -10,10 +10,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
-  <!-- Firebase Web SDK (Compat) for Google Sign-In & Cloud Sync -->
-  <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-  <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
-  <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <!-- Firebase Modular SDK Bridge (Auth + Named Firestore DB Sync with Android App) -->
+  <script type="module" src="./cloud-bridge.js"></script>
   <!-- SheetJS for local multi-tab .xlsx Excel workbook import -->
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script defer src="./app.js"></script>
@@ -70,8 +68,8 @@
         <span id="googleSignInLabel">Google खात्याने लॉगिन करा (Sign in with Google)</span>
       </button>
 
-      <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--text-subtle);">
-        <span id="authNoteText">प्रत्येक युजरचा डेटा स्वतंत्र व सुरक्षित राहतो.</span>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;color:var(--text-subtle);">
+        <span id="authNoteText">मोबाईल अ‍ॅपमधील डेटा पाहण्यासाठी त्याच Google खात्याने लॉगिन करा.</span>
         <button id="authLangBtn" class="card-link" type="button">EN</button>
       </div>
     </div>
