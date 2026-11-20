@@ -1,7 +1,21 @@
 (() => {
   'use strict';
 
-  const STORAGE_KEY = 'smart_meter_pro_web_v1';
+  const LEGACY_STORAGE_KEY = 'smart_meter_pro_web_v1';
+  const USERS_KEY = 'smart_meter_pro_users_v1';
+  const SESSION_KEY = 'smart_meter_pro_session_v1';
+  const PREF_LANG_KEY = 'smart_meter_pro_lang_v1';
+
+  const FIREBASE_CONFIG = {
+    apiKey: 'AIzaSyAMW1Iir84mvLoprAL461YfalV-ISx19j4',
+    authDomain: 'gen-lang-client-0644163839.firebaseapp.com',
+    projectId: 'gen-lang-client-0644163839',
+    storageBucket: 'gen-lang-client-0644163839.firebasestorage.app',
+    messagingSenderId: '418787384815',
+    appId: '1:418787384815:web:30e8e982723daebe7c2a1a'
+  };
+
+  let firebaseAuth = null;
 
   const THEMES = [
     { id: 'cyber', className: 'theme-cyber', isDark: true, labelMr: 'सायबर डार्क निऑन', labelEn: 'Cyber Dark Neon', start: '#060B14', primary: '#38BDF8' },
@@ -26,10 +40,83 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
 02-Nov-2026,8:31:54 AM,56211,25713,72265,651
 03-Nov-2026,8:12:38 AM,56250,25732,72309,653`;
 
+  // ---------- Auth & Per-User Storage Helpers ----------
+  function loadUsers() {
+    try {
+      const raw = localStorage.getItem(USERS_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveUsers(users) {
+    try {
+      localStorage.setItem(USERS_KEY, JSON.stringify(users));
+    } catch (err) {
+      console.error('Users save failed:', err);
+    }
+  }
+
+  function loadSession() {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      const u = JSON.parse(raw);
+      return u && u.id ? u : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveSession(user) {
+    try {
+      if (user) localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+      else localStorage.removeItem(SESSION_KEY);
+    } catch (err) {
+      console.error('Session save failed:', err);
+    }
+  }
+
+  async function hashPassword(plain) {
+    const salted = 'smp_v1_' + String(plain || '');
+    if (window.crypto && window.crypto.subtle && window.TextEncoder) {
+      try {
+        const bytes = new TextEncoder().encode(salted);
+        const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+        return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+      } catch {
+        // Fallback below for non-secure contexts
+      }
+    }
+    let h1 = 0x811c9dc5;
+    let h2 = 0x01000193;
+    for (let i = 0; i < salted.length; i++) {
+      const ch = salted.charCodeAt(i);
+      h1 ^= ch;
+      h1 = Math.imul(h1, 0x01000193);
+      h2 = Math.imul(h2 ^ ch, 0x85ebca6b);
+    }
+    return 'fb_' + (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+  }
+
+  let currentUser = loadSession();
+  let authMode = 'login';
+
+  function getUserStorageKey() {
+    return currentUser ? `${LEGACY_STORAGE_KEY}_${currentUser.id}` : LEGACY_STORAGE_KEY;
+  }
+
   // ---------- Default Persistent State ----------
   function defaultState() {
+    let savedLangMr = true;
+    try {
+      const l = localStorage.getItem(PREF_LANG_KEY);
+      if (l === 'en') savedLangMr = false;
+    } catch {}
     return {
-      isMr: true,
+      isMr: savedLangMr,
       currentTab: 0, // 0: Dashboard, 1: History, 2: Customers, 3: Backup/Export
       dateFilter: 'ALL',
       sortDesc: true,
@@ -60,7 +147,17 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
 
   function loadState() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const key = getUserStorageKey();
+      let raw = localStorage.getItem(key);
+      // Migrate pre-login legacy data once into the first user who logs in
+      if (!raw && currentUser) {
+        const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY);
+        if (legacyRaw) {
+          localStorage.setItem(key, legacyRaw);
+          localStorage.removeItem(LEGACY_STORAGE_KEY);
+          raw = legacyRaw;
+        }
+      }
       if (!raw) return defaultState();
       const parsed = JSON.parse(raw);
       return {
@@ -78,7 +175,9 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
 
   function saveState() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      localStorage.setItem(PREF_LANG_KEY, state.isMr ? 'mr' : 'en');
+      if (!currentUser) return;
+      localStorage.setItem(getUserStorageKey(), JSON.stringify({
         isMr: state.isMr,
         branding: state.branding,
         sheetConfig: state.sheetConfig,
@@ -869,6 +968,10 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     document.getElementById('langToggleBtn').textContent = state.isMr ? 'EN' : 'म/हिं';
     document.getElementById('fabLabel').textContent = t('नवीन रिडिंग नोंदवा', 'Log Reading');
     document.getElementById('addReadingFab').style.display = state.currentTab === 0 ? 'inline-flex' : 'none';
+    const pillName = document.getElementById('userPillName');
+    if (pillName && currentUser) {
+      pillName.textContent = currentUser.name || currentUser.email || 'User';
+    }
   }
 
   // ---------- Rendering ----------
@@ -1331,6 +1434,19 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
 
         <div class="card">
           <div class="card-header">
+            <div class="card-title">👤 ${t('युजर खाते व लॉगआउट', 'User Account & Sign Out')}</div>
+          </div>
+          <p class="field-help" style="margin-bottom:12px;">
+            ${currentUser ? `<strong>${esc(currentUser.name || 'User')}</strong> (${esc(currentUser.email || '')}) — ${currentUser.provider === 'google' ? 'Google Sign-In' : t('लोकल खाते', 'Local Account')}` : ''}
+          </p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-outline" type="button" data-action="open-account">⚙️ ${t('खाते सेटिंग्ज', 'Account Settings')}</button>
+            <button class="btn btn-danger" type="button" data-action="sign-out">🚪 ${t('लॉगआउट करा', 'Sign Out')}</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
             <div class="card-title">🧹 ${t('डेटा क्लीन करा', 'Clear Local Data')}</div>
           </div>
           <p class="field-help" style="margin-bottom:12px;">
@@ -1431,6 +1547,8 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
         else if (act === 'export-csv') exportSelectedCustomerCsv();
         else if (act === 'print-pdf') window.print();
         else if (act === 'backup-json') exportBackupJson();
+        else if (act === 'open-account') openAccountModal();
+        else if (act === 'sign-out') signOutUser();
         else if (act === 'clear-all-data') clearAllData();
       });
     });
@@ -1957,7 +2075,317 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     showToast(t('JSON बॅकअप फाईल डाउनलोड झाली!', 'JSON backup downloaded!'));
   }
 
+  // ---------- User Account Modal & Auth Flow ----------
+  function openAccountModal() {
+    if (!currentUser) return;
+    const isLocal = currentUser.provider !== 'google';
+    openModal(
+      t('👤 युजर खाते (User Account)', '👤 User Account'),
+      `
+        <div class="card" style="background:var(--surface-variant);margin-bottom:4px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="width:44px;height:44px;border-radius:14px;background:var(--primary);color:#fff;display:grid;place-items:center;font-size:20px;font-weight:800;">
+              ${esc((currentUser.name || currentUser.email || 'U').slice(0, 1).toUpperCase())}
+            </div>
+            <div style="min-width:0;">
+              <div style="font-size:15px;font-weight:800;">${esc(currentUser.name || 'User')}</div>
+              <div style="font-size:12px;color:var(--text-subtle);word-break:break-all;">${esc(currentUser.email || '')}</div>
+              <div style="margin-top:4px;font-size:11px;font-weight:700;color:var(--primary);">
+                ${isLocal ? t('🔐 लोकल युजर खाते (Email / Username)', '🔐 Local User Account') : '🌐 Google Account'}
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--text-subtle);">
+            ${t(`या खात्यात ${state.customers.length} ग्राहक आणि ${state.readings.length} मीटर रीडिंग्स जतन आहेत.`,
+              `${state.customers.length} customers and ${state.readings.length} readings saved in this account.`)}
+          </div>
+        </div>
+
+        ${isLocal ? `
+          <div class="card" style="background:var(--surface-variant);">
+            <div style="font-size:13px;font-weight:800;margin-bottom:8px;">🔑 ${t('पासवर्ड बदला', 'Change Password')}</div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <input id="accOldPass" class="input" type="password" placeholder="${t('सध्याचा पासवर्ड', 'Current password')}" />
+              <input id="accNewPass" class="input" type="password" placeholder="${t('नवीन पासवर्ड (किमान ४ अक्षरे)', 'New password (min 4 chars)')}" />
+              <button id="accChangePassBtn" class="btn btn-outline btn-sm" type="button">
+                ${t('पासवर्ड अपडेट करा', 'Update Password')}
+              </button>
+            </div>
+          </div>
+        ` : ''}
+      `,
+      `
+        <button class="btn btn-outline" type="button" id="closeAccBtn">${t('बंद करा', 'Close')}</button>
+        <button class="btn btn-danger" type="button" id="logoutModalBtn">🚪 ${t('लॉगआउट करा', 'Sign Out')}</button>
+      `
+    );
+
+    document.getElementById('closeAccBtn').onclick = closeModal;
+    document.getElementById('logoutModalBtn').onclick = signOutUser;
+
+    const chBtn = document.getElementById('accChangePassBtn');
+    if (chBtn) {
+      chBtn.onclick = async () => {
+        const oldP = document.getElementById('accOldPass').value;
+        const newP = document.getElementById('accNewPass').value;
+        if (!oldP || newP.length < 4) {
+          showToast(t('कृपया सध्याचा पासवर्ड आणि किमान ४ अक्षरांचा नवीन पासवर्ड टाका.', 'Enter current password and a new password (min 4 chars).'));
+          return;
+        }
+        const users = loadUsers();
+        const idx = users.findIndex(u => u.id === currentUser.id);
+        if (idx < 0) {
+          showToast(t('खाते सापडले नाही.', 'Account not found.'));
+          return;
+        }
+        const oldHash = await hashPassword(oldP);
+        if (users[idx].passwordHash !== oldHash) {
+          showToast(t('सध्याचा पासवर्ड चुकीचा आहे.', 'Current password is incorrect.'));
+          return;
+        }
+        users[idx].passwordHash = await hashPassword(newP);
+        saveUsers(users);
+        document.getElementById('accOldPass').value = '';
+        document.getElementById('accNewPass').value = '';
+        showToast(t('पासवर्ड यशस्वीरित्या बदलला!', 'Password updated successfully!'));
+      };
+    }
+  }
+
+  function showAuthError(msg) {
+    const box = document.getElementById('authErrorBox');
+    if (!box) return;
+    if (!msg) {
+      box.classList.add('hidden');
+      box.textContent = '';
+    } else {
+      box.textContent = msg;
+      box.classList.remove('hidden');
+    }
+  }
+
+  function updateAuthScreenText() {
+    const isReg = authMode === 'register';
+    document.getElementById('authTabLogin').classList.toggle('active', !isReg);
+    document.getElementById('authTabRegister').classList.toggle('active', isReg);
+    document.getElementById('authTabLogin').textContent = t('लॉगिन (Login)', 'Login');
+    document.getElementById('authTabRegister').textContent = t('नवीन खाते (Register)', 'Register');
+    document.getElementById('authNameGroup').classList.toggle('hidden', !isReg);
+    document.getElementById('authNameInput').required = isReg;
+
+    document.getElementById('authSubtitle').textContent = isReg
+      ? t('नवीन युजर खाते तयार करा आणि मीटर रीडिंग सुरू करा', 'Create a new account to manage meter readings')
+      : t('दैनिक मीटर रीडिंग व Google Sheet सिंकसाठी लॉगिन करा', 'Sign in to access Daily Meter Readings & Google Sheet Sync');
+
+    document.getElementById('authNameLabel').textContent = t('पूर्ण नाव (Full Name) *', 'Full Name *');
+    document.getElementById('authNameInput').placeholder = t('उदा. वैभव घाग', 'e.g. Vaibhav Ghag');
+    document.getElementById('authEmailLabel').textContent = t('ईमेल किंवा युजरनेम (Email / Username) *', 'Email or Username *');
+    document.getElementById('authEmailInput').placeholder = t('name@example.com किंवा operator1', 'name@example.com or operator1');
+    document.getElementById('authPassLabel').textContent = t('पासवर्ड (Password) *', 'Password *');
+    document.getElementById('authPassInput').placeholder = t('किमान ४ अक्षरे / अंक', 'At least 4 characters');
+    document.getElementById('authPassInput').autocomplete = isReg ? 'new-password' : 'current-password';
+
+    document.getElementById('authSubmitBtn').textContent = isReg
+      ? t('✨ खाते तयार करा व लॉगिन करा', '✨ Create Account & Sign In')
+      : t('🔐 लॉगिन करा (Sign In)', '🔐 Sign In');
+    document.getElementById('authOrText').textContent = t('किंवा (OR)', 'OR');
+    document.getElementById('googleSignInLabel').textContent = t('Google खात्याने लॉगिन करा (Sign in with Google)', 'Sign in with Google');
+    document.getElementById('authNoteText').textContent = t('प्रत्येक युजरचा डेटा स्वतंत्र व सुरक्षित राहतो.', 'Each user has isolated, private storage.');
+    document.getElementById('authLangBtn').textContent = state.isMr ? 'EN' : 'मराठी';
+  }
+
+  function showAuthGate() {
+    document.getElementById('appContainer').classList.add('hidden');
+    document.getElementById('authScreen').classList.remove('hidden');
+    const theme = THEMES.find(th => th.id === state.branding.themeId) || THEMES[0];
+    document.body.className = theme.className;
+    showAuthError('');
+    updateAuthScreenText();
+  }
+
+  function showAppForUser(user) {
+    currentUser = user;
+    saveSession(user);
+    state = loadState();
+    document.getElementById('authScreen').classList.add('hidden');
+    document.getElementById('appContainer').classList.remove('hidden');
+    showAuthError('');
+    render();
+    if (state.sheetConfig.sheetUrl) {
+      syncGoogleSheetFromUrl(state.sheetConfig.sheetUrl, state.sheetConfig.tabNamesCsv, true);
+    }
+  }
+
+  async function signOutUser() {
+    closeModal();
+    const wasGoogle = currentUser?.provider === 'google';
+    currentUser = null;
+    saveSession(null);
+    if (wasGoogle && firebaseAuth) {
+      try { await firebaseAuth.signOut(); } catch {}
+    }
+    const prevMr = state.isMr;
+    const prevTheme = state.branding.themeId;
+    state = defaultState();
+    state.isMr = prevMr;
+    state.branding.themeId = prevTheme;
+    document.getElementById('authPassInput').value = '';
+    showAuthGate();
+    showToast(t('तुम्ही यशस्वीरित्या लॉगआउट झाले आहात.', 'Signed out successfully.'));
+  }
+
+  function initFirebaseAuth() {
+    try {
+      if (window.firebase && typeof window.firebase.initializeApp === 'function') {
+        if (!window.firebase.apps || window.firebase.apps.length === 0) {
+          window.firebase.initializeApp(FIREBASE_CONFIG);
+        }
+        firebaseAuth = window.firebase.auth();
+        firebaseAuth.onAuthStateChanged(fbUser => {
+          if (fbUser && !currentUser) {
+            showAppForUser({
+              id: 'g_' + fbUser.uid,
+              name: fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'Google User'),
+              email: fbUser.email || '',
+              provider: 'google'
+            });
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Firebase init skipped:', err);
+    }
+  }
+
+  // Auth screen listeners
+  document.getElementById('authTabLogin').addEventListener('click', () => {
+    authMode = 'login';
+    showAuthError('');
+    updateAuthScreenText();
+  });
+
+  document.getElementById('authTabRegister').addEventListener('click', () => {
+    authMode = 'register';
+    showAuthError('');
+    updateAuthScreenText();
+  });
+
+  document.getElementById('authLangBtn').addEventListener('click', () => {
+    state.isMr = !state.isMr;
+    try { localStorage.setItem(PREF_LANG_KEY, state.isMr ? 'mr' : 'en'); } catch {}
+    updateAuthScreenText();
+  });
+
+  document.getElementById('authForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    showAuthError('');
+
+    const name = document.getElementById('authNameInput').value.trim();
+    const identifier = document.getElementById('authEmailInput').value.trim();
+    const pass = document.getElementById('authPassInput').value;
+    const normId = identifier.toLowerCase();
+
+    if (identifier.length < 3) {
+      showAuthError(t('कृपया किमान ३ अक्षरांचा ईमेल किंवा युजरनेम टाका.', 'Please enter a valid email or username (min 3 characters).'));
+      return;
+    }
+    if (pass.length < 4) {
+      showAuthError(t('पासवर्ड किमान ४ अक्षरांचा असावा.', 'Password must be at least 4 characters.'));
+      return;
+    }
+
+    const users = loadUsers();
+
+    if (authMode === 'register') {
+      if (!name) {
+        showAuthError(t('कृपया तुमचे पूर्ण नाव टाका.', 'Please enter your full name.'));
+        return;
+      }
+      if (users.some(u => u.emailLower === normId)) {
+        showAuthError(t('हा ईमेल / युजरनेम आधीच नोंदणीकृत आहे. कृपया लॉगिन करा.', 'This email/username is already registered. Please sign in.'));
+        return;
+      }
+      const passwordHash = await hashPassword(pass);
+      const newUser = {
+        id: 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        name,
+        email: identifier,
+        emailLower: normId,
+        passwordHash,
+        createdAt: Date.now()
+      };
+      users.push(newUser);
+      saveUsers(users);
+      document.getElementById('authPassInput').value = '';
+      showAppForUser({ id: newUser.id, name: newUser.name, email: newUser.email, provider: 'local' });
+      showToast(t(`स्वागत आहे, ${newUser.name}! नवीन खाते तयार झाले.`, `Welcome, ${newUser.name}! Account created.`));
+    } else {
+      if (users.length === 0) {
+        showAuthError(t('अजून कोणतेही खाते तयार केलेले नाही. कृपया आधी "नवीन खाते (Register)" टॅबवरून नोंदणी करा.', 'No account exists yet. Please click "Register" first to create your account.'));
+        return;
+      }
+      const found = users.find(u => u.emailLower === normId);
+      if (!found) {
+        showAuthError(t('हा ईमेल / युजरनेम सापडला नाही. नवीन खात्यासाठी Register निवडा.', 'Email/username not found. Switch to Register to create an account.'));
+        return;
+      }
+      const passwordHash = await hashPassword(pass);
+      if (found.passwordHash !== passwordHash) {
+        showAuthError(t('चुकीचा पासवर्ड! कृपया पुन्हा प्रयत्न करा.', 'Incorrect password! Please try again.'));
+        return;
+      }
+      document.getElementById('authPassInput').value = '';
+      showAppForUser({ id: found.id, name: found.name, email: found.email, provider: 'local' });
+      showToast(t(`स्वागत आहे, ${found.name}!`, `Welcome back, ${found.name}!`));
+    }
+  });
+
+  document.getElementById('googleSignInBtn').addEventListener('click', async () => {
+    showAuthError('');
+    if (!firebaseAuth) initFirebaseAuth();
+    if (!firebaseAuth || !window.firebase?.auth?.GoogleAuthProvider) {
+      showAuthError(t(
+        'Google Sign-In लोड होऊ शकले नाही. कृपया इंटरनेट तपासा किंवा ईमेल/पासवर्ड लॉगिन वापरा.',
+        'Google Sign-In could not load. Check your internet or use Email/Password login.'
+      ));
+      return;
+    }
+    const btn = document.getElementById('googleSignInBtn');
+    btn.disabled = true;
+    try {
+      const provider = new window.firebase.auth.GoogleAuthProvider();
+      const res = await firebaseAuth.signInWithPopup(provider);
+      const u = res.user;
+      showAppForUser({
+        id: 'g_' + u.uid,
+        name: u.displayName || (u.email ? u.email.split('@')[0] : 'Google User'),
+        email: u.email || '',
+        provider: 'google'
+      });
+      showToast(t(`Google खात्याने लॉगिन यशस्वी (${u.displayName || u.email})!`, `Signed in with Google (${u.displayName || u.email})!`));
+    } catch (err) {
+      const code = err?.code || '';
+      if (code === 'auth/unauthorized-domain') {
+        const host = window.location.hostname || 'this domain';
+        showAuthError(t(
+          `Google Sign-In साठी Firebase Console → Authentication → Settings → Authorized domains मध्ये "${host}" जोडावे लागेल. तोपर्यंत वरचा ईमेल/युजरनेम व पासवर्ड लॉगिन तात्काळ वापरा!`,
+          `To enable Google Sign-In on "${host}", add it in Firebase Console → Authentication → Settings → Authorized domains. Meanwhile, you can sign in immediately with Email/Username & Password above!`
+        ));
+      } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        showAuthError(t('Google लॉगिन रद्द केले गेले.', 'Google sign-in popup was closed.'));
+      } else {
+        showAuthError(t(
+          `Google लॉगिन त्रुटी: ${err?.message || code || 'अज्ञात त्रुटी'}. कृपया ईमेल/पासवर्ड लॉगिन वापरा.`,
+          `Google sign-in error: ${err?.message || code || 'Unknown error'}. Please use Email/Password login.`
+        ));
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   // ---------- Global Header Controls ----------
+  document.getElementById('userAccountBtn').addEventListener('click', openAccountModal);
   document.getElementById('brandBtn').addEventListener('click', openBrandingModal);
   document.getElementById('themeModalBtn').addEventListener('click', openBrandingModal);
   document.getElementById('sheetSyncTopBtn').addEventListener('click', openSheetSyncModal);
@@ -1981,9 +2409,11 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     render();
   });
 
-  // Initial Render + Auto-Sync Linked Google Sheet on Page Open
-  render();
-  if (state.sheetConfig.sheetUrl) {
-    syncGoogleSheetFromUrl(state.sheetConfig.sheetUrl, state.sheetConfig.tabNamesCsv, true);
+  // Initialize Auth & Boot App
+  initFirebaseAuth();
+  if (currentUser) {
+    showAppForUser(currentUser);
+  } else {
+    showAuthGate();
   }
 })();

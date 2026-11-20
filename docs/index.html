@@ -10,49 +10,118 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
+  <!-- Firebase Web SDK (Compat) for Google Sign-In & Cloud Sync -->
+  <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
   <!-- SheetJS for local multi-tab .xlsx Excel workbook import -->
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script defer src="./app.js"></script>
 </head>
 <body class="theme-cyber">
-  <!-- Top Header -->
-  <header class="app-header">
-    <div class="header-inner">
-      <button id="brandBtn" class="brand-btn" type="button" title="अॅपचा लूक व नाव बदला">
-        <div class="brand-icon" id="brandIconDisplay">⚡</div>
-        <div>
-          <div class="brand-title" id="brandTitleDisplay">Smart Meter Pro</div>
-          <div class="brand-subtitle" id="brandSubtitleDisplay">दैनिक मीटर रीडिंग डॅशबोर्ड</div>
+  <!-- Full-Screen User Login / Register Gate -->
+  <section id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-hero">
+        <div class="auth-logo">⚡</div>
+        <h1 style="font-size:21px;font-weight:800;letter-spacing:-0.01em;">Smart Meter Pro</h1>
+        <p id="authSubtitle" style="font-size:12.5px;color:var(--text-subtle);">
+          दैनिक मीटर रीडिंग व Google Sheet सिंकसाठी लॉगिन करा
+        </p>
+      </div>
+
+      <div class="auth-tabs">
+        <button id="authTabLogin" class="auth-tab-btn active" type="button">लॉगिन (Login)</button>
+        <button id="authTabRegister" class="auth-tab-btn" type="button">नवीन खाते (Register)</button>
+      </div>
+
+      <div id="authErrorBox" class="auth-error hidden"></div>
+
+      <form id="authForm" style="display:flex;flex-direction:column;gap:11px;">
+        <div id="authNameGroup" class="field-group hidden">
+          <label class="field-label" id="authNameLabel">पूर्ण नाव (Full Name) *</label>
+          <input id="authNameInput" class="input" type="text" autocomplete="name" placeholder="उदा. वैभव घाग" />
         </div>
+
+        <div class="field-group">
+          <label class="field-label" id="authEmailLabel">ईमेल किंवा युजरनेम (Email / Username) *</label>
+          <input id="authEmailInput" class="input" type="text" autocomplete="username" placeholder="name@example.com किंवा operator1" required />
+        </div>
+
+        <div class="field-group">
+          <label class="field-label" id="authPassLabel">पासवर्ड (Password) *</label>
+          <input id="authPassInput" class="input" type="password" autocomplete="current-password" placeholder="किमान ४ अक्षरे / अंक" required />
+        </div>
+
+        <button id="authSubmitBtn" class="btn btn-primary" style="width:100%;padding:12px;font-size:13.5px;" type="submit">
+          🔐 लॉगिन करा (Sign In)
+        </button>
+      </form>
+
+      <div class="auth-divider"><span id="authOrText">किंवा (OR)</span></div>
+
+      <button id="googleSignInBtn" class="btn-google" type="button">
+        <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+        </svg>
+        <span id="googleSignInLabel">Google खात्याने लॉगिन करा (Sign in with Google)</span>
       </button>
 
-      <div class="header-actions">
-        <button id="darkModeToggleBtn" class="icon-pill-btn" type="button" title="Dark / Light Mode">☀️</button>
-        <button id="themeModalBtn" class="icon-pill-btn" type="button" title="App Look / Theme">🎨</button>
-        <button id="langToggleBtn" class="icon-pill-btn" type="button" title="Language">EN</button>
-        <button id="sheetSyncTopBtn" class="icon-pill-btn" type="button" title="Google Sheet Sync">📊 Sheet</button>
-        <button id="kvarTopBtn" class="icon-pill-btn" type="button" title="kVAr Calculator">⚡ kVAr</button>
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--text-subtle);">
+        <span id="authNoteText">प्रत्येक युजरचा डेटा स्वतंत्र व सुरक्षित राहतो.</span>
+        <button id="authLangBtn" class="card-link" type="button">EN</button>
       </div>
     </div>
-  </header>
+  </section>
 
-  <!-- Main Responsive Layout -->
-  <div class="app-shell">
-    <!-- Desktop / Tablet Side Navigation Rail -->
-    <aside class="side-nav" id="sideNav"></aside>
+  <!-- Main Logged-In App Wrapper -->
+  <div id="appContainer" class="hidden">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="header-inner">
+        <button id="brandBtn" class="brand-btn" type="button" title="अॅपचा लूक व नाव बदला">
+          <div class="brand-icon" id="brandIconDisplay">⚡</div>
+          <div>
+            <div class="brand-title" id="brandTitleDisplay">Smart Meter Pro</div>
+            <div class="brand-subtitle" id="brandSubtitleDisplay">दैनिक मीटर रीडिंग डॅशबोर्ड</div>
+          </div>
+        </button>
 
-    <!-- Dynamic Active Screen Content -->
-    <main class="main-content" id="mainContent"></main>
+        <div class="header-actions">
+          <button id="userAccountBtn" class="user-pill-btn" type="button" title="Account & Logout">
+            <span>👤</span>
+            <span id="userPillName" class="user-pill-name">User</span>
+          </button>
+          <button id="darkModeToggleBtn" class="icon-pill-btn" type="button" title="Dark / Light Mode">☀️</button>
+          <button id="themeModalBtn" class="icon-pill-btn" type="button" title="App Look / Theme">🎨</button>
+          <button id="langToggleBtn" class="icon-pill-btn" type="button" title="Language">EN</button>
+          <button id="sheetSyncTopBtn" class="icon-pill-btn" type="button" title="Google Sheet Sync">📊 Sheet</button>
+          <button id="kvarTopBtn" class="icon-pill-btn" type="button" title="kVAr Calculator">⚡ kVAr</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Responsive Layout -->
+    <div class="app-shell">
+      <!-- Desktop / Tablet Side Navigation Rail -->
+      <aside class="side-nav" id="sideNav"></aside>
+
+      <!-- Dynamic Active Screen Content -->
+      <main class="main-content" id="mainContent"></main>
+    </div>
+
+    <!-- Floating Action Button (Log Reading) -->
+    <button id="addReadingFab" class="fab" type="button">
+      <span>＋</span>
+      <span id="fabLabel">नवीन रिडिंग नोंदवा</span>
+    </button>
+
+    <!-- Mobile Bottom Navigation -->
+    <nav class="bottom-nav" id="bottomNav"></nav>
   </div>
-
-  <!-- Floating Action Button (Log Reading) -->
-  <button id="addReadingFab" class="fab" type="button">
-    <span>＋</span>
-    <span id="fabLabel">नवीन रिडिंग नोंदवा</span>
-  </button>
-
-  <!-- Mobile Bottom Navigation -->
-  <nav class="bottom-nav" id="bottomNav"></nav>
 
   <!-- Reusable Modal Container -->
   <div id="modalBackdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true">
