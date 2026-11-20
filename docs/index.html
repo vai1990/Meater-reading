@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="mr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#060B14" />
+  <title>Smart Meter Pro — Web</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+  <!-- SheetJS for local multi-tab .xlsx Excel workbook import -->
+  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script defer src="./app.js"></script>
+</head>
+<body class="theme-cyber">
+  <!-- Top Header -->
+  <header class="app-header">
+    <div class="header-inner">
+      <button id="brandBtn" class="brand-btn" type="button" title="अॅपचा लूक व नाव बदला">
+        <div class="brand-icon" id="brandIconDisplay">⚡</div>
+        <div>
+          <div class="brand-title" id="brandTitleDisplay">Smart Meter Pro</div>
+          <div class="brand-subtitle" id="brandSubtitleDisplay">दैनिक मीटर रीडिंग डॅशबोर्ड</div>
+        </div>
+      </button>
+
+      <div class="header-actions">
+        <button id="darkModeToggleBtn" class="icon-pill-btn" type="button" title="Dark / Light Mode">☀️</button>
+        <button id="themeModalBtn" class="icon-pill-btn" type="button" title="App Look / Theme">🎨</button>
+        <button id="langToggleBtn" class="icon-pill-btn" type="button" title="Language">EN</button>
+        <button id="sheetSyncTopBtn" class="icon-pill-btn" type="button" title="Google Sheet Sync">📊 Sheet</button>
+        <button id="kvarTopBtn" class="icon-pill-btn" type="button" title="kVAr Calculator">⚡ kVAr</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Responsive Layout -->
+  <div class="app-shell">
+    <!-- Desktop / Tablet Side Navigation Rail -->
+    <aside class="side-nav" id="sideNav"></aside>
+
+    <!-- Dynamic Active Screen Content -->
+    <main class="main-content" id="mainContent"></main>
+  </div>
+
+  <!-- Floating Action Button (Log Reading) -->
+  <button id="addReadingFab" class="fab" type="button">
+    <span>＋</span>
+    <span id="fabLabel">नवीन रिडिंग नोंदवा</span>
+  </button>
+
+  <!-- Mobile Bottom Navigation -->
+  <nav class="bottom-nav" id="bottomNav"></nav>
+
+  <!-- Reusable Modal Container -->
+  <div id="modalBackdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3 id="modalTitle" style="font-size:15.5px;font-weight:800;"></h3>
+        <button id="modalCloseBtn" class="btn btn-outline btn-sm" type="button">✕</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+      <div id="modalFoot" class="modal-foot"></div>
+    </div>
+  </div>
+
+  <!-- Status Toast -->
+  <div id="toast" class="toast hidden"></div>
+</body>
+</html>
