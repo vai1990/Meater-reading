@@ -724,9 +724,12 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
         throw new Error('शीटमध्ये वैध मीटर रीडिंग नोंदी सापडल्या नाहीत.');
       }
 
-      const { custCreated, readUpserted } = mergeParsedTabs(parsedTabs);
+      const { custCreated, readUpserted } = mergeParsedTabs(parsedTabs, isSilent);
       const totalRows = parsedTabs.reduce((acc, tab) => acc + tab.readings.length, 0);
       const latestEntry = parsedTabs.flatMap(tab => tab.readings).sort((a, b) => b.timestamp - a.timestamp)[0];
+      if (!isSilent) {
+        state.currentTab = 0;
+      }
 
       state.sheetConfig = {
         sheetUrl: url,
@@ -796,11 +799,12 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
           return;
         }
 
-        const { readUpserted } = mergeParsedTabs(parsedTabs);
+        const { readUpserted } = mergeParsedTabs(parsedTabs, false);
         const totalRows = parsedTabs.reduce((s, x) => s + x.readings.length, 0);
         state.sheetConfig.lastSyncTs = Date.now();
         state.sheetConfig.lastTabsCount = parsedTabs.length;
         state.sheetConfig.lastReadingsCount = totalRows;
+        state.currentTab = 0;
         saveState();
         closeModal();
         render();
@@ -819,7 +823,8 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
 
   function loadOfflineSampleSheet() {
     const tab = parseRowsForCustomerTab(parseCsvLines(SAMPLE_TIRUPATI_CSV), 'TIRUPATI CRUSHER');
-    const { readUpserted } = mergeParsedTabs([tab]);
+    const { readUpserted } = mergeParsedTabs([tab], false);
+    state.currentTab = 0;
     saveState();
     closeModal();
     render();
@@ -829,7 +834,7 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     ));
   }
 
-  function mergeParsedTabs(tabs, respectDeletedBlocklist = true) {
+  function mergeParsedTabs(tabs, respectDeletedBlocklist = false) {
     let custCreated = 0;
     let readUpserted = 0;
     let firstCustId = null;
@@ -837,6 +842,9 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     for (const tab of tabs) {
       if (respectDeletedBlocklist && isCustomerDeletedName(tab.customer.name)) {
         continue;
+      }
+      if (!respectDeletedBlocklist) {
+        unmarkCustomerDeletedName(tab.customer.name);
       }
       let existingCust = state.customers.find(
         c => c.name.trim().toLowerCase() === tab.customer.name.trim().toLowerCase()
@@ -900,7 +908,7 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
       recalculateCustomerDeltas(targetCust.id);
     }
 
-    if (!state.selectedCustomerId || !state.customers.some(c => c.id === state.selectedCustomerId)) {
+    if (!state.selectedCustomerId || !state.customers.some(c => c.id === state.selectedCustomerId) || (!respectDeletedBlocklist && custCreated > 0 && firstCustId)) {
       state.selectedCustomerId = firstCustId || state.customers[0]?.id || null;
     }
     return { custCreated, readUpserted };

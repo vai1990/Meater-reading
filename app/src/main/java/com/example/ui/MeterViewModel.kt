@@ -518,7 +518,8 @@ class MeterViewModel(
                 val result = GoogleSheetSyncHelper.fetchAndParseFromSheetUrl(sheetUrl, tabNamesCsv)
                 val (custCount, readCount) = mergeSheetTabsIntoLocalDb(
                     tabs = result.tabs,
-                    selectImportedCustomer = _uiState.value.selectedCustomer == null || !isSilentAutoSync
+                    selectImportedCustomer = _uiState.value.selectedCustomer == null || !isSilentAutoSync,
+                    respectDeletedBlocklist = isSilentAutoSync
                 )
                 val totalSheetRows = result.tabs.sumOf { it.readings.size }
                 val latestSheetEntry = result.tabs.flatMap { it.readings }.maxByOrNull { it.timestamp }
@@ -566,7 +567,8 @@ class MeterViewModel(
                 val result = GoogleSheetSyncHelper.parsePickedSheetUri(context, uri)
                 val (_, readCount) = mergeSheetTabsIntoLocalDb(
                     tabs = result.tabs,
-                    selectImportedCustomer = true
+                    selectImportedCustomer = true,
+                    respectDeletedBlocklist = false
                 )
                 val totalSheetRows = result.tabs.sumOf { it.readings.size }
                 val existingCfg = _uiState.value.sheetSyncConfig
@@ -604,7 +606,8 @@ class MeterViewModel(
                 val result = GoogleSheetSyncHelper.loadBundledSheetTabs(context)
                 val (_, readCount) = mergeSheetTabsIntoLocalDb(
                     tabs = result.tabs,
-                    selectImportedCustomer = true
+                    selectImportedCustomer = true,
+                    respectDeletedBlocklist = false
                 )
                 GoogleSheetSyncHelper.markBundledSheetImported(context)
                 val totalSheetRows = result.tabs.sumOf { it.readings.size }
@@ -642,6 +645,9 @@ class MeterViewModel(
         for (tab in tabs) {
             if (respectDeletedBlocklist && tab.customer.name.trim().lowercase() in deletedNames) {
                 continue
+            }
+            if (!respectDeletedBlocklist) {
+                driveManager.unmarkCustomerDeleted(tab.customer.name)
             }
             val allLocalCustomers = repository.getAllCustomersList()
             val currentSelBefore = _uiState.value.selectedCustomer
@@ -752,11 +758,12 @@ class MeterViewModel(
         val currentSel = _uiState.value.selectedCustomer
         val updatedCustomers = repository.getAllCustomersList()
         val currentStillExists = currentSel != null && updatedCustomers.any { it.id == currentSel.id }
-        if (currentStillExists && currentSel != null) {
-            observeReadingsForCustomer(currentSel.id)
-        } else if (selectImportedCustomer && firstImportedCustomer != null) {
+        if (selectImportedCustomer && firstImportedCustomer != null && (!currentStillExists || customersCreated > 0)) {
             selectCustomer(firstImportedCustomer)
-        } else if (firstImportedCustomer != null && currentSel == null) {
+            _uiState.update { it.copy(currentTab = 0) }
+        } else if (currentStillExists && currentSel != null) {
+            observeReadingsForCustomer(currentSel.id)
+        } else if (firstImportedCustomer != null) {
             selectCustomer(firstImportedCustomer)
         }
         refreshDbStats()
