@@ -332,15 +332,6 @@ class MeterViewModel(
             }
 
             if (!alreadyExists) {
-                val colleagueBadge = "[सहकारी सिंक: ${cr.createdByName}]"
-                val mergedRemarks = if (cr.remarks.contains(cr.createdByName)) {
-                    cr.remarks
-                } else if (cr.remarks.isBlank()) {
-                    colleagueBadge
-                } else {
-                    "${cr.remarks} $colleagueBadge"
-                }
-
                 repository.insertReading(
                     MeterReading(
                         customerId = targetCustomer.id,
@@ -354,23 +345,15 @@ class MeterViewModel(
                         isPfAutoCalculated = cr.isPfAutoCalculated,
                         previousKwh = cr.previousKwh.takeIf { it > 0.0 },
                         unitsConsumed = cr.unitsConsumed.takeIf { it > 0.0 },
-                        remarks = mergedRemarks
+                        remarks = cr.remarks
                     )
                 )
-                if (cr.ownerId != currentUid) {
-                    newlySyncedFromColleague++
-                    lastColleagueName = cr.createdByName
-                }
+                newlySyncedFromColleague++
             }
         }
 
         if (newlySyncedFromColleague > 0) {
             refreshDbStats()
-            _uiState.update {
-                it.copy(
-                    statusMessage = "सहकारी '$lastColleagueName' ने केलेली $newlySyncedFromColleague नवीन रीडिंग एन्ट्री आपोआप सिंक झाली!"
-                )
-            }
         }
     }
 
@@ -875,7 +858,7 @@ class MeterViewModel(
                 _uiState.update {
                     it.copy(
                         isTeamSyncLoading = false,
-                        statusMessage = "सर्व ग्राहक व मीटर रीडिंग्स टीम '${ws.inviteCode}' वर लाईव्ह सिंक झाले!"
+                        statusMessage = "सर्व ग्राहक व मीटर रीडिंग्स क्लाउडवर सिंक झाले! (Cloud Sync Complete)"
                     )
                 }
             } catch (e: Exception) {
@@ -1399,18 +1382,18 @@ class MeterViewModel(
                 _uiState.update {
                     it.copy(
                         statusMessage = if (existingId == 0L)
-                            "रीडिंग जतन केली आणि सहकाऱ्यांसोबत लाईव्ह सिंक झाली!"
+                            "रीडिंग जतन केली आणि क्लाउडवर सिंक झाली!"
                         else
-                            "रीडिंग अपडेट केली आणि सहकाऱ्यांसोबत सिंक झाली!"
+                            "रीडिंग अपडेट केली आणि क्लाउडवर सिंक झाली!"
                     )
                 }
             } else {
                 _uiState.update {
                     it.copy(
                         statusMessage = if (existingId == 0L)
-                            "मीटर रीडिंग जतन व सहकाऱ्यांसोबत सिंक झाली (Reading Synced)"
+                            "मीटर रीडिंग जतन व क्लाउडवर सिंक झाली (Reading Saved)"
                         else
-                            "रीडिंग अपडेट की गई (Reading Updated)"
+                            "रीडिंग अपडेट केली (Reading Updated)"
                     )
                 }
             }

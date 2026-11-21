@@ -22,7 +22,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -312,7 +311,7 @@ fun AuthScreen(
                     )
 
                     Text(
-                        text = "सहकारी लाईव्ह सिंक आणि क्लाउड मीटर रीडिंग डेटाबेस\n(Colleague Live Sync & Cloud Meter Tracker)",
+                        text = "दैनिक मीटर रीडिंग आणि क्लाउड डेटाबेस\n(Daily Meter Reading & Cloud Tracker)",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -332,14 +331,14 @@ fun AuthScreen(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = Icons.Default.Groups,
+                                    imageVector = Icons.Default.CloudSync,
                                     contentDescription = null,
                                     tint = Color(0xFF2E7D32),
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "तुमच्या सहकाऱ्याने केलेली एन्ट्री तुमच्याकडे लगेच दिसेल!",
+                                    text = "तुमचा सर्व मीटर रीडिंग डेटा क्लाउडवर सुरक्षित राहतो!",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
                                     color = Color(0xFF1B5E20)
@@ -347,14 +346,14 @@ fun AuthScreen(
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = Icons.Default.CloudSync,
+                                    imageVector = Icons.Default.VerifiedUser,
                                     contentDescription = null,
                                     tint = Color(0xFF1A73E8),
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "टीम कोड (Team Code) शेअर करा आणि रिअल-टाईम क्लाउड सिंक सुरू करा.",
+                                    text = "Google खात्याने लॉगिन करा आणि मोबाईल व वेबवर डेटा थेट सिंक करा.",
                                     fontSize = 12.sp,
                                     color = Color(0xFF33691E)
                                 )

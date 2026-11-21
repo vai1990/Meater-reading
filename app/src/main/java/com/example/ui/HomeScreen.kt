@@ -106,10 +106,9 @@ import com.example.ui.dialogs.AppBrandingDialog
 import com.example.ui.dialogs.CustomerListDialog
 import com.example.ui.dialogs.ExportReportDialog
 import com.example.ui.dialogs.GoogleSheetSyncDialog
+import androidx.compose.material.icons.automirrored.filled.Logout
 import com.example.ui.dialogs.KvarCalculatorDialog
 import com.example.ui.dialogs.PfGuideDialog
-import com.example.ui.dialogs.TeamSyncDialog
-import com.example.ui.dialogs.shareInviteCode
 import com.example.ui.theme.MyApplicationTheme
 import com.example.util.AppVisualTheme
 import com.example.util.PowerFactorCalculator
@@ -124,6 +123,7 @@ fun HomeScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     var readingToDelete by remember { mutableStateOf<MeterReading?>(null) }
     var isSearchExpanded by remember { mutableStateOf(false) }
@@ -379,15 +379,15 @@ fun HomeScreen(
                                     modifier = Modifier.testTag("top_bar_kvar_calc_button")
                                 )
                                 androidx.compose.material3.DropdownMenuItem(
-                                    text = { Text(if (isHindi) "सहकारी लाईव्ह सिंक" else "Colleague Live Sync", fontWeight = FontWeight.SemiBold) },
+                                    text = { Text(if (isHindi) "क्लाउड सिंक करा" else "Cloud Sync Now", fontWeight = FontWeight.SemiBold) },
                                     leadingIcon = {
-                                        Icon(Icons.Default.Groups, contentDescription = null, tint = Color(0xFF047857))
+                                        Icon(Icons.Default.CloudSync, contentDescription = null, tint = Color(0xFF047857))
                                     },
                                     onClick = {
                                         isMoreActionsExpanded = false
-                                        viewModel.openTeamSyncDialog()
+                                        viewModel.syncAllToColleagueCloudNow()
                                     },
-                                    modifier = Modifier.testTag("top_bar_team_sync_button")
+                                    modifier = Modifier.testTag("top_bar_cloud_sync_button")
                                 )
                                 androidx.compose.material3.DropdownMenuItem(
                                     text = { Text(if (isHindi) "Google Drive बॅकअप" else "Google Drive Backup", fontWeight = FontWeight.SemiBold) },
@@ -399,6 +399,19 @@ fun HomeScreen(
                                         viewModel.setCurrentTab(3)
                                     },
                                     modifier = Modifier.testTag("top_bar_drive_backup_button")
+                                )
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(if (isHindi) "लॉगआउट करा (Sign Out)" else "Sign Out", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = {
+                                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                    },
+                                    onClick = {
+                                        isMoreActionsExpanded = false
+                                        coroutineScope.launch {
+                                            signOut(context)
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("top_bar_sign_out_button")
                                 )
                             }
                         }
@@ -831,116 +844,9 @@ fun HomeScreen(
                         }
                     }
 
-                    // 1A. Colleague Live Cloud Sync & Google Drive Quick Actions Strip
+                    // 1A. Google Drive Quick Backup & Restore Strip
                     item {
-                        val ws = uiState.activeWorkspace
-                        val inviteCode = ws?.inviteCode ?: "TEAM101"
-                        val memberCount = ws?.memberNames?.size ?: 1
-                        val isDark = activeTheme.isDark
-                        val teamAccent = if (isDark) Color(0xFF34D399) else Color(0xFF047857)
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("dashboard_team_sync_card"),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surface
-                                ),
-                                shape = RoundedCornerShape(16.dp),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 11.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(38.dp)
-                                                .background(teamAccent.copy(alpha = 0.16f), RoundedCornerShape(11.dp)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Groups,
-                                                contentDescription = null,
-                                                tint = teamAccent,
-                                                modifier = Modifier.size(21.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Column {
-                                            Text(
-                                                text = if (isHindi) "सहकारी सिंक (कोड: $inviteCode)" else "Colleague Sync ($inviteCode)",
-                                                fontSize = 12.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                            Text(
-                                                text = if (isHindi)
-                                                    "$memberCount सहकारी • ${uiState.cloudReadings.size} क्लाउड नोंदी"
-                                                else
-                                                    "$memberCount members • ${uiState.cloudReadings.size} synced",
-                                                fontSize = 11.sp,
-                                                color = teamAccent
-                                            )
-                                        }
-                                    }
-
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        OutlinedButton(
-                                            onClick = {
-                                                shareInviteCode(
-                                                    context = context,
-                                                    inviteCode = inviteCode,
-                                                    teamName = ws?.name ?: "MeterRead Team"
-                                                )
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp),
-                                            shape = RoundedCornerShape(10.dp),
-                                            modifier = Modifier
-                                                .height(34.dp)
-                                                .testTag("dashboard_share_team_code_button")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Share,
-                                                contentDescription = null,
-                                                tint = Color(0xFF047857),
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = if (isHindi) "शेअर" else "Share",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF047857)
-                                            )
-                                        }
-
-                                        Button(
-                                            onClick = { viewModel.openTeamSyncDialog() },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF047857)),
-                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                            shape = RoundedCornerShape(10.dp),
-                                            modifier = Modifier
-                                                .height(34.dp)
-                                                .testTag("dashboard_team_sync_button")
-                                        ) {
-                                            Text(
-                                                text = if (isHindi) "टीम सिंक" else "Team Sync",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
                             // 1B. Google Drive Quick Backup & Restore Strip
                             Card(
                                 modifier = Modifier
@@ -1345,35 +1251,6 @@ fun HomeScreen(
             initialReading = uiState.kvarSelectedReading,
             isHindi = isHindi,
             onDismiss = { viewModel.closeKvarCalculator() }
-        )
-    }
-
-    // Dialog 7: Colleague Live Cloud Sync (सहकारी लाईव्ह सिंक)
-    val coroutineScope = rememberCoroutineScope()
-    if (uiState.showTeamSyncDialog) {
-        TeamSyncDialog(
-            activeWorkspace = uiState.activeWorkspace,
-            cloudReadings = uiState.cloudReadings,
-            currentUserName = uiState.currentUserName,
-            currentUserEmail = uiState.currentUserEmail,
-            isLoading = uiState.isTeamSyncLoading,
-            isHindi = isHindi,
-            onJoinTeamByCode = { code, name ->
-                viewModel.joinColleagueWorkspace(code, name)
-            },
-            onCreateCustomTeam = { code, teamName, userName ->
-                viewModel.createCustomTeamWorkspace(code, teamName, userName)
-            },
-            onSyncNow = {
-                viewModel.syncAllToColleagueCloudNow()
-            },
-            onSignOut = {
-                viewModel.closeTeamSyncDialog()
-                coroutineScope.launch {
-                    signOut(context)
-                }
-            },
-            onDismiss = { viewModel.closeTeamSyncDialog() }
         )
     }
 

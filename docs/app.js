@@ -1466,7 +1466,7 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
             ${currentUser ? `<strong>${esc(currentUser.name || 'User')}</strong> (${esc(currentUser.email || '')})` : ''}<br/>
             ${currentUser?.provider === 'google'
               ? (cloudState.connected
-                  ? `<span style="color:#10B981;font-weight:700;">✅ ${t('मोबाईल क्लाउडशी जोडलेले आहे (Live Sync)', 'Connected to Mobile Cloud (Live Sync)')}</span>${cloudState.activeWorkspace?.inviteCode ? ` • Team: <span class="mono">${esc(cloudState.activeWorkspace.inviteCode)}</span>` : ''}`
+                  ? `<span style="color:#10B981;font-weight:700;">✅ ${t('मोबाईल क्लाउडशी जोडलेले आहे (Live Sync)', 'Connected to Mobile Cloud (Live Sync)')}</span>`
                   : `<span style="color:#F59E0B;font-weight:700;">⏳ ${t('क्लाउड कनेक्शन तपासत आहे...', 'Connecting to Cloud...')}</span>`)
               : `<span style="color:#F59E0B;font-weight:700;">⚠️ ${t('लोकल खाते — मोबाईल डेटा पाहण्यासाठी Google ने लॉगिन करा', 'Local account — Sign in with Google to sync Mobile App data')}</span>`
             }
@@ -2469,7 +2469,6 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
     if (!currentUser) return;
     const isLocal = currentUser.provider !== 'google';
     const fbUser = window.SmartMeterCloud?.getCurrentFirebaseUser();
-    const wsCode = cloudState.activeWorkspace?.inviteCode || '';
 
     openModal(
       t('👤 युजर खाते व मोबाईल क्लाउड सिंक', '👤 Account & Mobile Cloud Sync'),
@@ -2525,7 +2524,6 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
             <div style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:10px;">
               ${fbUser
                 ? `${cloudState.connected ? '✅' : '⏳'} ${t('क्लाउड स्थिती:', 'Status:')} <strong>${cloudState.connected ? t('जोडलेले (Connected)', 'Connected') : t('कनेक्ट होत आहे...', 'Connecting...')}</strong><br/>
-                   ${wsCode ? `${t('टीम कोड (Team Code):', 'Team Code:')} <span class="mono" style="color:var(--primary);font-weight:800;">${esc(wsCode)}</span><br/>` : ''}
                    ${t(`क्लाउडवर सापडलेला डेटा: ${cloudState.cloudCustomerCount} ग्राहक, ${cloudState.cloudReadingCount} रीडिंग्स`,
                      `Cloud records found: ${cloudState.cloudCustomerCount} customers, ${cloudState.cloudReadingCount} readings`)}`
                 : `<span style="color:#F59E0B;">⚠️ ${t('Google क्लाउड सेशन पुन्हा कनेक्ट करा.', 'Reconnect your Google Cloud session.')}</span>`
@@ -2533,22 +2531,12 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
               ${cloudState.lastCloudError ? `<div style="color:#EF4444;margin-top:4px;">${esc(cloudState.lastCloudError)}</div>` : ''}
             </div>
 
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
               ${fbUser
                 ? `<button id="accCloudSyncBtn" class="btn btn-emerald btn-sm" style="flex:1;" type="button">🔄 ${t('आता क्लाउड सिंक करा', 'Sync Cloud Now')}</button>`
                 : `<button id="accSwitchGoogleBtn" class="btn btn-emerald btn-sm" style="flex:1;" type="button">🌐 ${t('Google पुन्हा कनेक्ट करा', 'Reconnect Google')}</button>`
               }
             </div>
-
-            ${fbUser ? `
-              <div style="border-top:1px solid var(--border);padding-top:10px;">
-                <label class="field-label" style="margin-bottom:5px;display:block;">${t('मोबाईलमधील Team Code ने जोडा (ऐच्छिक)', 'Join Mobile App Team Code (Optional)')}</label>
-                <div style="display:flex;gap:6px;">
-                  <input id="accTeamCodeInput" class="input mono" placeholder="TEAM_XXXXXX" style="flex:1;" />
-                  <button id="accJoinTeamBtn" class="btn btn-outline btn-sm" type="button">${t('जोडा', 'Join')}</button>
-                </div>
-              </div>
-            ` : ''}
           </div>
         `}
       `,
@@ -2574,27 +2562,6 @@ DATE,TIME,Kwh,KvArh,KvAh,PF
       syncBtn.onclick = async () => {
         closeModal();
         await syncCloudNow(false);
-      };
-    }
-
-    const joinBtn = document.getElementById('accJoinTeamBtn');
-    if (joinBtn) {
-      joinBtn.onclick = async () => {
-        const code = (document.getElementById('accTeamCodeInput').value || '').trim().toUpperCase();
-        if (code.length < 3) {
-          showToast(t('कृपया वैध Team Code टाका.', 'Please enter a valid Team Code.'));
-          return;
-        }
-        try {
-          const fbU = window.SmartMeterCloud.getCurrentFirebaseUser();
-          const ws = await window.SmartMeterCloud.joinWorkspace(code, fbU.uid, fbU.displayName || currentUser.name);
-          cloudState.activeWorkspace = ws;
-          closeModal();
-          await syncCloudNow(false);
-          showToast(t(`टीम "${ws.inviteCode}" यशस्वीरित्या जोडली गेली!`, `Joined team "${ws.inviteCode}"!`));
-        } catch (err) {
-          showToast(t(`टीम जोडता आली नाही: ${err?.message || err}`, `Failed to join team: ${err?.message || err}`));
-        }
       };
     }
 
